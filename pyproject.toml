@@ -9,3 +9,11 @@ dependencies = [
     "torchaudio>=2.4.1",
     "torchvision>=0.19.1",
 ]
+
+[tool.ruff.lint]
+select = ["ALL"]
+# Avoid enforcing print rule
+ignore = ["T201"]
+
+[tool.ruff]
+line-length = 120
