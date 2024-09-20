@@ -1,0 +1,22 @@
+# Hydra config for training
+
+data:
+  time: 1
+  height: 16
+  width: 16
+  frame_rate: 15
+  train_loader:
+    batch_size: 8
+    num_workers: 4
+  val_loader:
+    batch_size: 8
+    num_workers: 2
+
+model:
+  num_classes: 2
+  learning_rate: 1e-3
+
+logger:
+  project: "dummy_video_classification"
+  name: "dummy_model_run"
+  save_dir: "./logs"
