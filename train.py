@@ -10,7 +10,7 @@ from data.dummy_dataset import DummyDataset
 from models.dummy_model import DummyVideoClassifier
 
 
-@hydra.main(config_path="../configs", config_name="train.yaml")
+@hydra.main(config_path="configs", config_name="train.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
     # Create dataset and dataloaders
@@ -31,12 +31,14 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.data.train_loader.batch_size,
         shuffle=True,
         num_workers=cfg.data.train_loader.num_workers,
+        persistent_workers=True,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=cfg.data.val_loader.batch_size,
         shuffle=False,
         num_workers=cfg.data.val_loader.num_workers,
+        persistent_workers=True,
     )
 
     # Initialize the model
@@ -61,6 +63,7 @@ def main(cfg: DictConfig) -> None:
         accelerator="auto",
         devices=1,
         logger=logger,
+        log_every_n_steps=1,
     )
 
     # Train the model
