@@ -116,8 +116,8 @@ class DummyVideoClassifier(pl.LightningModule):
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y.squeeze())
         self.train_accuracy(y_hat, y.squeeze())
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("train_acc", self.train_accuracy, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/acc", self.train_accuracy, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:  # noqa: ARG002
@@ -134,8 +134,8 @@ class DummyVideoClassifier(pl.LightningModule):
         y_hat = self(x)
         loss = F.cross_entropy(y_hat, y.squeeze())
         self.val_accuracy(y_hat, y.squeeze())
-        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        self.log("val_acc", self.val_accuracy, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/acc", self.val_accuracy, on_step=True, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the model.
