@@ -70,19 +70,14 @@ class DummyVideoClassifier(pl.LightningModule):
             nn.Conv3d(3, 64, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
             nn.MaxPool3d(kernel_size=2, stride=2),
-            # nn.Conv3d(64, 128, kernel_size=3, padding=1),
-            # nn.ReLU(inplace=True),
-            # nn.MaxPool3d(kernel_size=2, stride=2),
         )
 
         # Calculate the size of the flattened features directly
         c_out = 64  # number of channels in the last Conv3d layer
-        t_out = num_frames // 2  # time dimension after 3 MaxPool3d operations
-        h_out = height // 2  # height after 3 MaxPool3d operations
-        w_out = width // 2  # width after 3 MaxPool3d operations
+        t_out = num_frames // 2  # time dimension after 1 MaxPool3d operations
+        h_out = height // 2  # height after 1 MaxPool3d operations
+        w_out = width // 2  # width after 1 MaxPool3d operations
         flattened_size = c_out * t_out * h_out * w_out
-
-        # self.flatten = nn.Flatten()
 
         self.classifier = nn.Linear(flattened_size, num_classes)
 
@@ -101,7 +96,6 @@ class DummyVideoClassifier(pl.LightningModule):
 
         """
         x = self.features(x)
-        # x = F.adaptive_avg_pool3d(x, (1, 1, 1))
         x = torch.flatten(x, 1)
         return self.classifier(x)
 
