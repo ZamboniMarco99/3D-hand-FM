@@ -1,17 +1,16 @@
 # Hydra config for training
 
 data:
-  train:
-    time: 1
-    height: 5
-    width: 5
-    frame_rate: 10
+  time: 1
+  height: 16
+  width: 16
+  frame_rate: 15
   train_loader:
-    batch_size: 32
+    batch_size: 8
     num_workers: 4
   val_loader:
-    batch_size: 32
-    num_workers: 4
+    batch_size: 8
+    num_workers: 2
 
 model:
   num_classes: 2
