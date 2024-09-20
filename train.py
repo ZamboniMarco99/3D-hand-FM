@@ -6,8 +6,8 @@ from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
-from src.data.dummy_dataset import DummyDataset
-from src.models.dummy_model import DummyVideoClassifier
+from data.dummy_dataset import DummyDataset
+from models.dummy_model import DummyVideoClassifier
 
 
 @hydra.main(config_path="../configs", config_name="train.yaml")
