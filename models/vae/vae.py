@@ -43,6 +43,8 @@ class VideoVAE(pl.LightningModule):
         height: int,
         width: int,
         learning_rate: float = 1e-3,  # noqa: ARG002
+        kld_weight: float = 1e-4,
+        mse_weight: float = 1e-8,
     ) -> None:
         """Initialize the VideoVAE model.
 
@@ -153,9 +155,12 @@ class VideoVAE(pl.LightningModule):
 
         """
         # MSE loss for video reconstruction
+        mse_weight = self.hparams.mse_weight
+        kld_weight = self.hparams.kld_weight
         mse = F.mse_loss(recon_x, x, reduction="sum")
         kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        return {"loss": mse + kld, "mse": mse, "kld": kld}
+        loss = mse * mse_weight + kld * kld_weight
+        return {"loss": loss, "mse": mse, "kld": kld}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VAE model.

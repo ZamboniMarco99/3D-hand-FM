@@ -47,6 +47,8 @@ def main(cfg: DictConfig) -> None:
         height=cfg.data.height,
         width=cfg.data.width,
         learning_rate=cfg.model.learning_rate,
+        kld_weight=cfg.model.kld_weight,
+        mse_weight=cfg.model.mse_weight,
     )
 
     # Setup Weights & Biases logger
