@@ -21,6 +21,7 @@ Example usage:
 
 """
 
+import logging
 import os
 from pathlib import Path
 
@@ -255,6 +256,11 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
         )
+
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"Train dataset size: {len(self.train_dataset)}")
+        logger.info(f"Validation dataset size: {len(self.val_dataset)}")
 
     def train_dataloader(self) -> DataLoader:
         """Create and return the DataLoader for the training dataset.

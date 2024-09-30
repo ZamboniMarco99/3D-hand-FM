@@ -8,6 +8,8 @@ task_name: "train_vae"
 
 train: True
 
+log_level: INFO
+
 model:
   learning_rate: 1e-3
   kld_weight: 0.00025
