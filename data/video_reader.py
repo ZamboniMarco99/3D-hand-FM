@@ -98,7 +98,7 @@ class VideoReader:
             self.video_width = int(video_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             self.video_height = int(video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         else:
-            if frame_dir_path not in ["", None]:
+            if frame_dir_path in ["", None]:
                 msg = "frame_dir_path must be provided if video_path is not provided"
                 raise ValueError(msg)
             self.fps = assumed_fps
