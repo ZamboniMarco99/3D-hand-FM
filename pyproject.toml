@@ -13,10 +13,18 @@ dependencies = [
     "wandb>=0.12.10",
 ]
 
+[tool.uv]
+dev-dependencies = [
+    "ruff>=0.6.8",
+]
+
 [tool.ruff.lint]
 select = ["ALL"]
-# Avoid enforcing print rule and imperative docstrings
-ignore = ["T201", "D401"]
+# Avoid enforcing print rule
+# Avoid enforcing imperative docstrings
+# Avoid enforcing too many arguments
+# Avoid enforcing docstrings in __init__.py
+ignore = ["T201", "D401", "PLR0913", "D104"]
 
 [tool.ruff]
 line-length = 120
