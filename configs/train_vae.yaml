@@ -1,6 +1,8 @@
 # Hydra config for training vae
 
-data: h20
+defaults:
+  - _self_
+  - data: h20
 
 task_name: "train_vae"
 
