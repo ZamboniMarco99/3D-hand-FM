@@ -158,7 +158,7 @@ class VideoVAE(pl.LightningModule):
         mse_weight = self.hparams.mse_weight
         kld_weight = self.hparams.kld_weight
         mse = F.mse_loss(recon_x, x, reduction="sum")
-        kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+        kld = torch.mean(-0.5 * torch.sum(1 + log_var - mu**2 - log_var.exp(), dim=1), dim=0)
         loss = mse * mse_weight + kld * kld_weight
         return {"loss": loss, "mse": mse, "kld": kld}
 
