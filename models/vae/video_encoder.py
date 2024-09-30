@@ -31,7 +31,7 @@ class VideoEncoder(nn.Module):
 
     """
 
-    def __init__(self, latent_dim: int = 256) -> None:
+    def __init__(self, latent_dim: int = 256, num_frames: int = 30, height: int = 480, width: int = 640) -> None:
         """Initialize the Encoder module.
 
         Args:
@@ -49,7 +49,11 @@ class VideoEncoder(nn.Module):
         super().__init__()
 
         # Load pre-trained MViT v2 Small model
-        self.backbone = mvit_v2_s(weights=MViT_V2_S_Weights.DEFAULT)
+        self.backbone = mvit_v2_s(
+            weights=MViT_V2_S_Weights.DEFAULT,
+            spatial_size=(height, width),
+            temporal_size=num_frames,
+        )
 
         backbone_out_features = self.backbone.head.in_features
 
