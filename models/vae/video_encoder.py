@@ -5,7 +5,7 @@ into a latent space representation. It utilizes the MViT v2 Small model as the b
 and adapts it for use in a Variational Autoencoder (VAE) architecture.
 
 Example usage:
-    encoder = Encoder(latent_dim=256)
+    encoder = VideoEncoder(num_frames=16, height=224, width=224, latent_dim=256)
     video_input = torch.randn(1, 3, 16, 224, 224)  # (batch, channels, frames, height, width)
     mu, log_var = encoder(video_input)
 """
@@ -31,15 +31,14 @@ class VideoEncoder(nn.Module):
 
     """
 
-    def __init__(self, latent_dim: int = 256, num_frames: int = 30, height: int = 480, width: int = 640) -> None:
+    def __init__(self, num_frames: int, height: int, width: int, latent_dim: int = 256) -> None:
         """Initialize the Encoder module.
 
         Args:
+            num_frames (int): Number of frames in each video sequence.
+            height (int): Height of each video frame.
+            width (int): Width of each video frame.
             latent_dim (int, optional): Dimensionality of the latent space. Defaults to 256.
-            input_channels (int, optional): Number of input channels in the video frames. Defaults to 3.
-            num_frames (int, optional): Number of frames in each video sequence. Defaults to 30.
-            height (int, optional): Height of each video frame. Defaults to 224.
-            width (int, optional): Width of each video frame. Defaults to 224.
 
         Note:
             The input dimensions (input_channels, num_frames, height, width) should match
