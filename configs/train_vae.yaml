@@ -1,0 +1,29 @@
+# Hydra config for training vae
+
+data:
+  time: 1
+  height: 64
+  width: 64
+  frame_rate: 16
+  train_loader:
+    batch_size: 8
+    num_workers: 4
+  val_loader:
+    batch_size: 8
+    num_workers: 4
+
+model:
+  learning_rate: 1e-3
+  kld_weight: 0.00025
+  mse_weight: 1e-8
+
+logger:
+  name: "test_run"
+  save_dir: "./logs"
+  group: "train_vae"
+  log_model: False # Don't log model weights
+
+trainer:
+  max_epochs: 20
+  accelerator: "auto"
+  devices: 1

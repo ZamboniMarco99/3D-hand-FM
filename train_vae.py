@@ -7,10 +7,10 @@ from pytorch_lightning.loggers import WandbLogger
 from torch.utils.data import DataLoader
 
 from data.dummy_dataset import DummyDataset
-from models.dummy_model import DummyVideoClassifier
+from models.vae.vae import VideoVAE
 
 
-@hydra.main(config_path="configs", config_name="train.yaml", version_base="1.1")
+@hydra.main(config_path="configs", config_name="train_vae.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
     # Create dataset and dataloaders
@@ -42,25 +42,28 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Initialize the model
-    model = DummyVideoClassifier(
-        num_classes=cfg.model.num_classes,
-        learning_rate=cfg.model.learning_rate,
+    model = VideoVAE(
         num_frames=cfg.data.time * cfg.data.frame_rate,
         height=cfg.data.height,
         width=cfg.data.width,
+        learning_rate=cfg.model.learning_rate,
+        kld_weight=cfg.model.kld_weight,
+        mse_weight=cfg.model.mse_weight,
     )
 
     # Setup Weights & Biases logger
     logger = WandbLogger(
         name=cfg.logger.name,
         save_dir=cfg.logger.save_dir,
+        group=cfg.logger.group,
+        log_model=cfg.logger.log_model,
     )
 
     # Initialize the trainer
     trainer = pl.Trainer(
-        max_epochs=20,
-        accelerator="auto",
-        devices=1,
+        max_epochs=cfg.trainer.max_epochs,
+        accelerator=cfg.trainer.accelerator,
+        devices=cfg.trainer.devices,
         logger=logger,
         log_every_n_steps=1,
     )

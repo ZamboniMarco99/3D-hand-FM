@@ -14,5 +14,5 @@ uv sync
 ## Training
 
 ```bash
-uv run src/train.py
+env $(cat .env | xargs) uv run src/train.py
 ```

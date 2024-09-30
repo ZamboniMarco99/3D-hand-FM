@@ -15,8 +15,8 @@ dependencies = [
 
 [tool.ruff.lint]
 select = ["ALL"]
-# Avoid enforcing print rule
-ignore = ["T201"]
+# Avoid enforcing print rule and imperative docstrings
+ignore = ["T201", "D401"]
 
 [tool.ruff]
 line-length = 120
