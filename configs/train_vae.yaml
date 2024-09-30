@@ -1,16 +1,10 @@
 # Hydra config for training vae
 
-data:
-  time: 1
-  height: 64
-  width: 64
-  frame_rate: 16
-  train_loader:
-    batch_size: 8
-    num_workers: 4
-  val_loader:
-    batch_size: 8
-    num_workers: 4
+data: h20
+
+task_name: "train_vae"
+
+train: True
 
 model:
   learning_rate: 1e-3
