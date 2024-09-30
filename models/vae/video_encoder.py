@@ -226,9 +226,6 @@ class VideoEncoder(nn.Module):
                 - log_var: Log variance of the latent Gaussian.
 
         """
-        # Ensure input is in the correct format (B, C, T, H, W)
-        x = x.permute(0, 2, 1, 3, 4)  # (B, T, C, H, W) -> (B, C, T, H, W)
-
         # Pass through the backbone
         features = self.backbone(x)
 

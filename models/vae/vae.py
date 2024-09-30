@@ -39,7 +39,6 @@ class VideoVAE(pl.LightningModule):
 
     def __init__(
         self,
-        input_channels: int,
         num_frames: int,
         height: int,
         width: int,
@@ -104,7 +103,9 @@ class VideoVAE(pl.LightningModule):
             torch.Tensor: Loss value.
 
         """
-        x = batch
+        x, _ = batch
+        # Permute the input tensor to match the expected shape for 3D convolutions
+        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
         loss = self.loss_function(recon_x, x, mu, log_var)
         self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
@@ -118,7 +119,9 @@ class VideoVAE(pl.LightningModule):
             batch_idx (int): Index of the batch.
 
         """
-        x = batch
+        x, _ = batch
+        # Permute the input tensor to match the expected shape for 3D convolutions
+        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
         loss = self.loss_function(recon_x, x, mu, log_var)
         self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
