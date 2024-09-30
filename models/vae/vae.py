@@ -58,8 +58,8 @@ class VideoVAE(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.encoder = VideoEncoder(input_channels, num_frames, height, width)
-        self.decoder = VideoDecoder(input_channels, num_frames, height, width)
+        self.encoder = VideoEncoder(num_frames=num_frames, height=height, width=width)
+        self.decoder = VideoDecoder(num_frames=num_frames, height=height, width=width)
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the VAE model.
@@ -107,7 +107,7 @@ class VideoVAE(pl.LightningModule):
         x = batch
         recon_x, mu, log_var = self(x)
         loss = self.loss_function(recon_x, x, mu, log_var)
-        self.log("train_loss", loss)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> None:  # noqa: ARG002
@@ -117,14 +117,11 @@ class VideoVAE(pl.LightningModule):
             batch (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
             batch_idx (int): Index of the batch.
 
-        Returns:
-            torch.Tensor: Loss value.
-
         """
         x = batch
         recon_x, mu, log_var = self(x)
         loss = self.loss_function(recon_x, x, mu, log_var)
-        self.log("val_loss", loss)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
 
     def loss_function(
         self,
