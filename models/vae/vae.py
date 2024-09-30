@@ -107,9 +107,11 @@ class VideoVAE(pl.LightningModule):
         # Permute the input tensor to match the expected shape for 3D convolutions
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
-        loss = self.loss_function(recon_x, x, mu, log_var)
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
-        return loss
+        losses = self.loss_function(recon_x, x, mu, log_var)
+        self.log("train/loss", losses["loss"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("train/mse_loss", losses["mse"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("train/kld_loss", losses["kld"], on_step=True, on_epoch=True, prog_bar=False)
+        return losses["loss"]
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> None:  # noqa: ARG002
         """Validation step of the VAE model.
@@ -123,8 +125,10 @@ class VideoVAE(pl.LightningModule):
         # Permute the input tensor to match the expected shape for 3D convolutions
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
-        loss = self.loss_function(recon_x, x, mu, log_var)
-        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        losses = self.loss_function(recon_x, x, mu, log_var)
+        self.log("val/loss", losses["loss"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("val/mse_loss", losses["mse"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("val/kld_loss", losses["kld"], on_step=True, on_epoch=True, prog_bar=False)
 
     def loss_function(
         self,
@@ -142,13 +146,16 @@ class VideoVAE(pl.LightningModule):
             log_var (torch.Tensor): Log variance of the latent Gaussian.
 
         Returns:
-            torch.Tensor: Total loss (reconstruction loss + KL divergence).
+            dict: A dictionary containing:
+                - 'loss': Total loss (reconstruction loss + KL divergence)
+                - 'mse': Mean Squared Error (reconstruction loss)
+                - 'kld': Kullback-Leibler Divergence
 
         """
         # MSE loss for video reconstruction
         mse = F.mse_loss(recon_x, x, reduction="sum")
         kld = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-        return mse + kld
+        return {"loss": mse + kld, "mse": mse, "kld": kld}
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VAE model.
