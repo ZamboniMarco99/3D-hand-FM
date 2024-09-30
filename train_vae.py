@@ -54,6 +54,7 @@ def main(cfg: DictConfig) -> None:
         name=cfg.logger.name,
         save_dir=cfg.logger.save_dir,
         group=cfg.logger.group,
+        log_model=cfg.logger.log_model,
     )
 
     # Initialize the trainer
