@@ -52,7 +52,6 @@ def main(cfg: DictConfig) -> None:
 
     # Setup Weights & Biases logger
     logger = WandbLogger(
-        project=cfg.logger.project,
         name=cfg.logger.name,
         save_dir=cfg.logger.save_dir,
     )
