@@ -43,17 +43,18 @@ class VideoVAE(pl.LightningModule):
         height: int,
         width: int,
         learning_rate: float = 1e-3,  # noqa: ARG002
-        kld_weight: float = 1e-4,
-        mse_weight: float = 1e-8,
+        kld_weight: float = 0.00025,  # noqa: ARG002
+        mse_weight: float = 1,  # noqa: ARG002
     ) -> None:
         """Initialize the VideoVAE model.
 
         Args:
-            input_channels (int): Number of input channels in the video frames.
             num_frames (int): Number of frames in each video sequence.
             height (int): Height of each video frame.
             width (int): Width of each video frame.
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            kld_weight (float, optional): Weight for the KL divergence loss term. Defaults to 0.00025.
+            mse_weight (float, optional): Weight for the mean squared error loss term. Defaults to 1.
 
         """
         super().__init__()

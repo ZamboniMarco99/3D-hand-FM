@@ -20,8 +20,10 @@ dev-dependencies = [
 
 [tool.ruff.lint]
 select = ["ALL"]
-# Avoid enforcing print rule and imperative docstrings
-ignore = ["T201", "D401"]
+# Avoid enforcing print rule
+# Avoid enforcing imperative docstrings
+# Avoid enforcing too many arguments
+ignore = ["T201", "D401", "PLR0913"]
 
 [tool.ruff]
 line-length = 120
