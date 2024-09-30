@@ -53,6 +53,7 @@ def main(cfg: DictConfig) -> None:
     logger = WandbLogger(
         name=cfg.logger.name,
         save_dir=cfg.logger.save_dir,
+        group=cfg.logger.group,
     )
 
     # Initialize the trainer

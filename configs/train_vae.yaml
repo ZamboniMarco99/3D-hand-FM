@@ -19,6 +19,7 @@ model:
 logger:
   name: "test_run"
   save_dir: "./logs"
+  group: "train_vae"
 
 trainer:
   max_epochs: 20
