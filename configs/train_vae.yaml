@@ -20,6 +20,7 @@ logger:
   name: "test_run"
   save_dir: "./logs"
   group: "train_vae"
+  log_model: False # Don't log model weights
 
 trainer:
   max_epochs: 20
