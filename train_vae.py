@@ -4,9 +4,8 @@ import hydra
 import pytorch_lightning as pl
 from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
-from torch.utils.data import DataLoader
 
-from data.dummy_dataset import DummyDataset
+from data.h2o_datamodule import H2ODataModule
 from models.vae.vae import VideoVAE
 
 
@@ -14,38 +13,20 @@ from models.vae.vae import VideoVAE
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
     # Create dataset and dataloaders
-    train_dataset = DummyDataset(
-        time=cfg.data.time,
-        height=cfg.data.height,
-        width=cfg.data.width,
-        frame_rate=cfg.data.frame_rate,
-    )
-    val_dataset = DummyDataset(
-        time=cfg.data.time,
-        height=cfg.data.height,
-        width=cfg.data.width,
-        frame_rate=cfg.data.frame_rate,
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg.data.train_loader.batch_size,
-        shuffle=True,
-        num_workers=cfg.data.train_loader.num_workers,
-        persistent_workers=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.data.val_loader.batch_size,
-        shuffle=False,
-        num_workers=cfg.data.val_loader.num_workers,
-        persistent_workers=True,
+    datamodule = H2ODataModule(
+        dataset_prefix=cfg.data.dataset_prefix,
+        cameras=cfg.data.cameras,
+        max_width=cfg.data.max_width,
+        max_height=cfg.data.max_height,
+        num_frames=cfg.data.num_frames,
+        batch_size=cfg.data.loader.batch_size,
     )
 
     # Initialize the model
     model = VideoVAE(
-        num_frames=cfg.data.time * cfg.data.frame_rate,
-        height=cfg.data.height,
-        width=cfg.data.width,
+        num_frames=cfg.data.num_frames,
+        height=cfg.data.max_height,
+        width=cfg.data.max_width,
         learning_rate=cfg.model.learning_rate,
         kld_weight=cfg.model.kld_weight,
         mse_weight=cfg.model.mse_weight,
@@ -69,7 +50,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     # Train the model
-    trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, datamodule=datamodule)
 
 
 if __name__ == "__main__":
