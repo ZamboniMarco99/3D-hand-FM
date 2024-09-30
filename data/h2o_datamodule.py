@@ -21,6 +21,9 @@ Example usage:
 
 """
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -79,18 +82,20 @@ class H2ODataset(Dataset):
         self.video_readers = []
         self.num_frames = num_frames
 
-        video_path_pattern = "{dataset_prefix}/{scene}/{camera}/rgb"
+        scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
-            for camera in cameras:
-                frame_dir_path = video_path_pattern.format(dataset_prefix=dataset_prefix, scene=scene, camera=camera)
-                self.video_readers.append(
-                    VideoReader(
-                        video_path=None,
-                        frame_dir_path=frame_dir_path,
-                        max_width=max_width,
-                        max_height=max_height,
-                    ),
-                )
+            scene_path = scene_path_pattern.format(dataset_prefix=dataset_prefix, scene=scene)
+            for directory in os.listdir(scene_path):
+                for camera in cameras:
+                    frame_dir_path = Path(scene_path) / directory / camera / "rgb"
+                    self.video_readers.append(
+                        VideoReader(
+                            video_path=None,
+                            frame_dir_path=frame_dir_path,
+                            max_width=max_width,
+                            max_height=max_height,
+                        ),
+                    )
 
     def __len__(self) -> int:
         """Get the total number of videos in the dataset.
