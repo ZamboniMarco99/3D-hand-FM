@@ -95,6 +95,7 @@ class H2ODataset(Dataset):
                             frame_dir_path=frame_dir_path,
                             max_width=max_width,
                             max_height=max_height,
+                            fmt_frame_fn=lambda x: f"{x:06d}.png",
                         ),
                     )
 
@@ -257,10 +258,8 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames=self.num_frames,
         )
 
-        logger = logging.getLogger(__name__)
-
-        logger.info(f"Train dataset size: {len(self.train_dataset)}")
-        logger.info(f"Validation dataset size: {len(self.val_dataset)}")
+        logging.info(f"Train dataset size: {len(self.train_dataset)}")
+        logging.info(f"Validation dataset size: {len(self.val_dataset)}")
 
     def train_dataloader(self) -> DataLoader:
         """Create and return the DataLoader for the training dataset.
