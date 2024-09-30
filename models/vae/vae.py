@@ -110,9 +110,9 @@ class VideoVAE(pl.LightningModule):
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
         losses = self.loss_function(recon_x, x, mu, log_var)
-        self.log("train/loss", losses["loss"], on_step=True, on_epoch=True, prog_bar=False)
-        self.log("train/mse_loss", losses["mse"], on_step=True, on_epoch=True, prog_bar=False)
-        self.log("train/kld_loss", losses["kld"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("train/loss", losses["loss"], on_step=False, on_epoch=True, prog_bar=False)
+        self.log("train/mse_loss", losses["mse"], on_step=False, on_epoch=True, prog_bar=False)
+        self.log("train/kld_loss", losses["kld"], on_step=False, on_epoch=True, prog_bar=False)
         return losses["loss"]
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> None:  # noqa: ARG002
@@ -128,9 +128,9 @@ class VideoVAE(pl.LightningModule):
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
         losses = self.loss_function(recon_x, x, mu, log_var)
-        self.log("val/loss", losses["loss"], on_step=True, on_epoch=True, prog_bar=False)
-        self.log("val/mse_loss", losses["mse"], on_step=True, on_epoch=True, prog_bar=False)
-        self.log("val/kld_loss", losses["kld"], on_step=True, on_epoch=True, prog_bar=False)
+        self.log("val/loss", losses["loss"], on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val/mse_loss", losses["mse"], on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val/kld_loss", losses["kld"], on_step=False, on_epoch=True, prog_bar=False)
 
     def loss_function(
         self,
