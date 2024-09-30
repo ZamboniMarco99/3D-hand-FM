@@ -91,7 +91,7 @@ class DummyDataset(Dataset):
         else:
             # Set half of the frames to white randomly
             white_frames = torch.randint(0, 2, (self.time * self.frame_rate,), dtype=torch.bool)
-            dummy_video[white_frames] = 255.0
+            dummy_video[white_frames] = 1.0
             dummy_class = torch.zeros(1, dtype=torch.long)
 
         return dummy_video, dummy_class
