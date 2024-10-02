@@ -273,7 +273,15 @@ class H2ODataModule(pl.LightningDataModule):
             DataLoader: A PyTorch DataLoader configured for the training dataset.
 
         """
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=4)
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=os.cpu_count(),
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
 
     def val_dataloader(self) -> DataLoader:
         """Create and return the DataLoader for the validation dataset.
@@ -282,4 +290,11 @@ class H2ODataModule(pl.LightningDataModule):
             DataLoader: A PyTorch DataLoader configured for the validation dataset.
 
         """
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=4)
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            num_workers=os.cpu_count(),
+            pin_memory=True,
+            persistent_workers=True,
+            prefetch_factor=2,
+        )
