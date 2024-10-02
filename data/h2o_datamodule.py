@@ -140,8 +140,13 @@ class H2ODataset(Dataset):
         else:
             frames = reader.get_frames(list(range(self.num_frames)))
 
+        # Normalize frames from uint8 to float32 with values between 0 and 1
+        normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
+        # Change shape from [H, W, C] to [C, H, W]
+        normalized_frames = [np.transpose(frame, (2, 0, 1)) for frame in normalized_frames]
+
         # Convert list of numpy arrays to a PyTorch tensor
-        return torch.from_numpy(np.stack(frames))
+        return torch.from_numpy(np.stack(normalized_frames))
 
 
 class H2ODataModule(pl.LightningDataModule):
