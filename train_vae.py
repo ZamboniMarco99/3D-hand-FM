@@ -26,6 +26,7 @@ def main(cfg: DictConfig) -> None:
         max_height=cfg.data.max_height,
         num_frames=cfg.data.num_frames,
         batch_size=cfg.data.loader.batch_size,
+        num_workers=cfg.data.loader.num_workers,
     )
     logger.info("DataModule initialized")
 
