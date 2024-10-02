@@ -29,11 +29,18 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info("DataModule initialized")
 
+    if cfg.data.resolution == "16x9":
+        width = cfg.data.max_width
+        height = int(cfg.data.max_width * 9 / 16)
+    else:
+        width = cfg.data.max_width
+        height = cfg.data.max_height
+
     # Initialize the model
     model = VideoVAE(
         num_frames=cfg.data.num_frames,
-        height=cfg.data.max_height,
-        width=cfg.data.max_width,
+        height=height,
+        width=width,
         learning_rate=cfg.model.learning_rate,
         kld_weight=cfg.model.kld_weight,
         mse_weight=cfg.model.mse_weight,
