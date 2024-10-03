@@ -1,75 +1,76 @@
 """Module containing the main function for training."""
 
+import logging
+
 import hydra
 import pytorch_lightning as pl
 from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
-from torch.utils.data import DataLoader
 
-from data.dummy_dataset import DummyDataset
+from data.h2o_datamodule import H2ODataModule
 from models.vae.vae import VideoVAE
 
 
 @hydra.main(config_path="configs", config_name="train_vae.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
+    # Set up logging
+    logging.basicConfig(level=cfg.log_level)
+    logger = logging.getLogger(__name__)
+
     # Create dataset and dataloaders
-    train_dataset = DummyDataset(
-        time=cfg.data.time,
-        height=cfg.data.height,
-        width=cfg.data.width,
-        frame_rate=cfg.data.frame_rate,
+    datamodule = H2ODataModule(
+        dataset_prefix=cfg.data.dataset_prefix,
+        cameras=cfg.data.cameras,
+        max_width=cfg.data.max_width,
+        max_height=cfg.data.max_height,
+        num_frames=cfg.data.num_frames,
+        batch_size=cfg.data.loader.batch_size,
+        num_workers=cfg.data.loader.num_workers,
     )
-    val_dataset = DummyDataset(
-        time=cfg.data.time,
-        height=cfg.data.height,
-        width=cfg.data.width,
-        frame_rate=cfg.data.frame_rate,
-    )
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=cfg.data.train_loader.batch_size,
-        shuffle=True,
-        num_workers=cfg.data.train_loader.num_workers,
-        persistent_workers=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=cfg.data.val_loader.batch_size,
-        shuffle=False,
-        num_workers=cfg.data.val_loader.num_workers,
-        persistent_workers=True,
-    )
+    logger.info("DataModule initialized")
+
+    if cfg.data.resolution == "16x9":
+        width = cfg.data.max_width
+        height = int(cfg.data.max_width * 9 / 16)
+    else:
+        width = cfg.data.max_width
+        height = cfg.data.max_height
 
     # Initialize the model
     model = VideoVAE(
-        num_frames=cfg.data.time * cfg.data.frame_rate,
-        height=cfg.data.height,
-        width=cfg.data.width,
+        num_frames=cfg.data.num_frames,
+        height=height,
+        width=width,
         learning_rate=cfg.model.learning_rate,
         kld_weight=cfg.model.kld_weight,
         mse_weight=cfg.model.mse_weight,
     )
+    logger.info("Model initialized")
 
     # Setup Weights & Biases logger
-    logger = WandbLogger(
+    wandb_logger = WandbLogger(
         name=cfg.logger.name,
         save_dir=cfg.logger.save_dir,
         group=cfg.logger.group,
         log_model=cfg.logger.log_model,
     )
+    logger.info("WandbLogger initialized")
 
     # Initialize the trainer
     trainer = pl.Trainer(
         max_epochs=cfg.trainer.max_epochs,
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
-        logger=logger,
+        logger=wandb_logger,
         log_every_n_steps=1,
     )
+    logger.info("Trainer initialized")
 
     # Train the model
-    trainer.fit(model, train_loader, val_loader)
+    logger.info("Starting model training")
+    trainer.fit(model, datamodule=datamodule)
+    logger.info("Model training completed")
 
 
 if __name__ == "__main__":

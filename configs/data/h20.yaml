@@ -1,0 +1,13 @@
+dataset_prefix: "/cluster/project/cvg/data/H2O"
+max_width: 256
+max_height: 256
+resolution: "16x9"
+num_frames: 32
+cameras:
+  - "cam0"
+  - "cam1"
+  - "cam2"
+  - "cam3"
+loader:
+  batch_size: 4
+  num_workers: 16
