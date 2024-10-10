@@ -92,7 +92,7 @@ class ManoReader:
             message = f"MANO file at {file_path} not found for frame {frame_idx}"
             raise FileNotFoundError(message)
         mano_params = self.decode_mano(np.loadtxt(file_path, dtype=np.float32))
-        return np.concatenate(mano_params.values())
+        return np.concatenate(list(mano_params.values()))
 
     def get_mano_sequence(self, frame_idxs: list[int]) -> list[np.ndarray]:
         """Retrieve MANO parameters for a sequence of frames.
