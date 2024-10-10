@@ -11,7 +11,7 @@ from data.h2o_datamodule import H2ODataModule
 from models.video_mano_regressor import VideoMANORegressor
 
 
-@hydra.main(config_path="configs", config_name="train_regressor.yaml", version_base="1.1")
+@hydra.main(config_path="configs", config_name="train_mano_regressor.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
     # Set up logging
