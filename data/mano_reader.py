@@ -92,6 +92,18 @@ class ManoReader:
             raise FileNotFoundError(message)
         return np.loadtxt(file_path, dtype=np.float32)
 
+    def get_mano_sequence(self, frame_idxs: list[int]) -> list[np.ndarray]:
+        """Retrieve MANO parameters for a sequence of frames.
+
+        Args:
+            frame_idxs (list[int]): List of frame indices to retrieve.
+
+        Returns:
+            list[np.ndarray]: List of MANO parameters for the specified frames.
+
+        """
+        return [self.get_mano(frame_idx) for frame_idx in frame_idxs]
+
     def __len__(self) -> int:
         """Get the total number of MANO files.
 
