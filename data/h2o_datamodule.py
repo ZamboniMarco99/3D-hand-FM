@@ -117,7 +117,7 @@ class H2ODataset(Dataset):
                         ManoReader(
                             mano_dir_path=mano_dir_path,
                             assumed_fps=30,
-                            fmt_frame_fn=lambda x: f"{x:06d}.npy",
+                            fmt_frame_fn=lambda x: f"{x:06d}.txt",
                         ),
                     )
 

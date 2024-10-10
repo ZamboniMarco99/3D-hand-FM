@@ -89,7 +89,7 @@ class ManoReader:
         file_name = self.fmt_frame_fn(frame_idx)
         file_path = self.mano_dir_path / file_name
         if not file_path.exists():
-            message = f"MANO file not found for frame {frame_idx}"
+            message = f"MANO file at {file_path} not found for frame {frame_idx}"
             raise FileNotFoundError(message)
         return np.loadtxt(file_path, dtype=np.float32)
 
