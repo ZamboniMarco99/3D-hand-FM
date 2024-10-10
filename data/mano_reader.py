@@ -10,6 +10,7 @@ The ManoReader class offers an efficient way to handle MANO data in conjunction 
 video processing tasks, allowing for synchronization between video frames and hand pose data.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +34,7 @@ class ManoReader:
         self,
         mano_dir_path: str | Path,
         assumed_fps: float | None = None,
-        fmt_frame_fn: callable[[int], str] | None = None,
+        fmt_frame_fn: Callable[[int], str] | None = None,
     ) -> None:
         """Initialize the ManoReader.
 
