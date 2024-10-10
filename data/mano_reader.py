@@ -65,12 +65,12 @@ class ManoReader:
 
         """
         return {
-            "left_tran": np.expand_dims(mano_params[1:4], 0).astype(np.float32),
-            "left_pose": np.expand_dims(mano_params[4:52], 0).astype(np.float32),
-            "left_shape": np.expand_dims(mano_params[52:62], 0).astype(np.float32),
-            "right_tran": np.expand_dims(mano_params[63:66], 0).astype(np.float32),
-            "right_pose": np.expand_dims(mano_params[66:114], 0).astype(np.float32),
-            "right_shape": np.expand_dims(mano_params[114:124], 0).astype(np.float32),
+            "left_tran": mano_params[1:4].astype(np.float32),
+            "left_pose": mano_params[4:52].astype(np.float32),
+            "left_shape": mano_params[52:62].astype(np.float32),
+            "right_tran": mano_params[63:66].astype(np.float32),
+            "right_pose": mano_params[66:114].astype(np.float32),
+            "right_shape": mano_params[114:124].astype(np.float32),
         }
 
     def get_mano(self, frame_idx: int) -> dict:
