@@ -121,8 +121,8 @@ class H2ODataset(Dataset):
                         ),
                     )
 
-                    self.num_clips += len(self.video_readers[-1]) // self.num_frames
                     self.clip_to_data[self.num_clips] = (self.video_readers[-1], self.mano_readers[-1])
+                    self.num_clips += len(self.video_readers[-1]) // self.num_frames
 
     def __len__(self) -> int:
         """Get the total number of clips in the dataset.
