@@ -281,8 +281,8 @@ class VideoMANORegressor(pl.LightningModule):
         # Additional metrics
         mse = F.mse_loss(y_pred, y, reduction="mean")
         mae = F.l1_loss(y_pred, y, reduction="mean")
-        self.log("train_mse", mse, on_step=True, on_epoch=True)
-        self.log("train_mae", mae, on_step=True, on_epoch=True)
+        self.log("train/mean_mse", mse, on_step=True, on_epoch=True)
+        self.log("train/mean_mae", mae, on_step=True, on_epoch=True)
 
         return loss
 
@@ -306,8 +306,8 @@ class VideoMANORegressor(pl.LightningModule):
         # Additional metrics
         mse = F.mse_loss(y_pred, y, reduction="mean")
         mae = F.l1_loss(y_pred, y, reduction="mean")
-        self.log("val_mse", mse, on_step=True, on_epoch=True)
-        self.log("val_mae", mae, on_step=True, on_epoch=True)
+        self.log("val/mean_mse", mse, on_step=True, on_epoch=True)
+        self.log("val/mean_mae", mae, on_step=True, on_epoch=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.
