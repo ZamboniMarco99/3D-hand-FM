@@ -1,10 +1,11 @@
 """Data module for H2O dataset.
 
 This module provides the H2ODataModule class, which is designed to handle
-multiple video files for machine learning tasks. It utilizes the VideoReader
-class to efficiently load and process video frames.
+multiple video sequences from the H2O dataset for machine learning tasks.
+It utilizes the VideoReader class to efficiently load and process video frames
+across different scenes and camera views.
 
-H20 dataset has videos that range from 257 to 1239 frames
+The H2O dataset consists of videos ranging from 257 to 1239 frames in length.
 
 Example usage:
     datamodule = H2ODataModule(
