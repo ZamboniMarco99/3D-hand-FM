@@ -1,9 +1,10 @@
 """Data module for H2O dataset.
 
 This module provides the H2ODataModule class, which is designed to handle
-multiple video sequences from the H2O dataset for machine learning tasks.
-It utilizes the VideoReader class to efficiently load and process video frames
-across different scenes and camera views.
+multiple video sequences and corresponding MANO hand pose parameters from the H2O dataset
+for machine learning tasks. It utilizes the VideoReader class to efficiently load and
+process video frames, and the ManoReader class to load MANO parameters, across different
+scenes and camera views.
 
 The H2O dataset consists of videos ranging from 257 to 1239 frames in length.
 
@@ -36,17 +37,19 @@ from data.video_reader import VideoReader
 
 
 class H2ODataset(Dataset):
-    """A dataset class for handling H2O video data.
+    """A dataset class for handling H2O video data and MANO parameters.
 
     This class is designed to work with the H2O dataset, which consists of multiple
-    video sequences across different scenes and camera views. It utilizes the VideoReader
-    class to efficiently load and process video frames.
+    video sequences and corresponding MANO hand pose parameters across different
+    scenes and camera views. It utilizes the VideoReader class to efficiently load
+    and process video frames, and the ManoReader class to load MANO parameters.
 
     Attributes:
         video_readers (list): A list of VideoReader instances, one for each video in the dataset.
-        num_frames (int | None): The number of frames to include per video. If None, all frames are included.
+        mano_readers (list): A list of ManoReader instances, one for each MANO sequence in the dataset.
+        num_frames (int | None): The number of frames to include per video clip. If None, all frames are included.
         num_clips (int): The total number of clips in the dataset.
-        clip_to_data (dict): Maps the first dataset index to the corresponding video reader and MANO reader.
+        clip_to_data (dict): Maps clip indices to corresponding video reader, MANO reader, and start frame.
 
     Args:
         dataset_prefix (str): The root directory path of the dataset.
@@ -54,10 +57,11 @@ class H2ODataset(Dataset):
         cameras (list[str]): List of camera names to include in the dataset.
         max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
         max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
-        num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+        num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
 
-    The dataset is constructed by creating VideoReader instances for each combination
-    of scene and camera, using the provided dataset_prefix to construct the full path.
+    The dataset is constructed by creating VideoReader and ManoReader instances for each
+    combination of scene and camera, using the provided dataset_prefix to construct the full path.
+    It handles both video frame data and corresponding MANO hand pose parameters.
 
     """
 
