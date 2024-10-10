@@ -43,6 +43,9 @@ class H2ODataset(Dataset):
     Attributes:
         video_readers (list): A list of VideoReader instances, one for each video in the dataset.
         num_frames (int | None): The number of frames to include per video. If None, all frames are included.
+        num_clips (int): The total number of clips in the dataset.
+        stride (int): The number of frames to skip between consecutive clips.
+        start_video_idx (dict): Maps the first dataset index to the corresponding video reader.
 
     Args:
         dataset_prefix (str): The root directory path of the dataset.
@@ -51,6 +54,7 @@ class H2ODataset(Dataset):
         max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
         max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
         num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+        stride (int | None, optional): Number of frames to skip between consecutive clips. Defaults to num_frames.
 
     The dataset is constructed by creating VideoReader instances for each combination
     of scene and camera, using the provided dataset_prefix to construct the full path.
@@ -65,6 +69,7 @@ class H2ODataset(Dataset):
         max_width: int | None = None,
         max_height: int | None = None,
         num_frames: int | None = None,
+        stride: int | None = None,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -75,13 +80,23 @@ class H2ODataset(Dataset):
             max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
             max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+            stride (int | None, optional): Number of frames to skip between consecutive clips. Defaults to num_frames.
 
         The dataset is constructed by creating VideoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
 
         """
         self.video_readers = []
+        self.num_clips = 0
         self.num_frames = num_frames
+
+        if stride is None:
+            self.stride = num_frames
+        else:
+            self.stride = stride
+
+        # Maps the first dataset index to the corresponding video
+        self.start_video_idx = {}
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
@@ -98,28 +113,49 @@ class H2ODataset(Dataset):
                             fmt_frame_fn=lambda x: f"{x:06d}.png",
                         ),
                     )
+                    self.start_video_idx[self.num_clips] = self.video_readers[-1]
+                    num_frames = len(self.video_readers[-1])
+                    self.num_clips += (num_frames - self.num_frames) // self.stride + 1
 
     def __len__(self) -> int:
-        """Get the total number of videos in the dataset.
+        """Get the total number of clips in the dataset.
 
         Returns:
-            int: The number of videos in the dataset.
+            int: The number of clips in the dataset.
 
         """
-        return len(self.video_readers)
+        return self.num_clips
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        """Retrieve a video as a tensor of frames from the dataset.
-
-        This method loads frames from a single video specified by the index.
-        If the video is shorter than the desired number of frames, it extends
-        the video with zero-filled frames.
+    def _get_video_and_start_frame(self, idx: int) -> tuple[VideoReader, int]:
+        """Get the video reader and start frame for a given dataset index.
 
         Args:
-            idx (int): The index of the video to retrieve.
+            idx (int): The dataset index.
 
         Returns:
-            torch.Tensor: A tensor containing frames of the video.
+            tuple[VideoReader, int]: A tuple containing the VideoReader instance
+                                     and the start frame index of the clip.
+
+        """
+        # Find the corresponding video
+        video_idx, video_reader = max((i, video) for i, video in self.start_video_idx.items() if i <= idx)
+
+        # Calculate the start frame of the clip within the video
+        clip_offset = idx - video_idx
+        start_frame = clip_offset * self.stride
+
+        return video_reader, start_frame
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        """Retrieve a video clip as a tensor of frames from the dataset.
+
+        This method loads frames from a single video clip specified by the index.
+
+        Args:
+            idx (int): The index of the video clip to retrieve.
+
+        Returns:
+            torch.Tensor: A tensor containing frames of the video clip.
                           Shape: (T, C, H, W), where T is the number of frames,
                           C is the number of channels, H is the height, and W is the width.
 
@@ -127,18 +163,13 @@ class H2ODataset(Dataset):
             IndexError: If the provided index is out of range.
 
         """
-        if idx >= len(self.video_readers):
-            msg = f"Index {idx} out of range. Total videos: {len(self.video_readers)}"
+        if idx >= len(self):
+            msg = f"Index {idx} out of range. Total clips: {len(self)}"
             raise IndexError(msg)
 
-        reader = self.video_readers[idx]
+        video_reader, start_frame = self._get_video_and_start_frame(idx)
 
-        if len(reader) < self.num_frames:
-            # If video is shorter than the desired number of frames extend with zeros
-            frames = reader.get_frames(list(range(len(reader))))
-            frames.extend(np.zeros((self.num_frames - len(reader), *frames[0].shape)))
-        else:
-            frames = reader.get_frames(list(range(self.num_frames)))
+        frames = video_reader.get_frames(list(range(start_frame, start_frame + self.num_frames)))
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
         normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
