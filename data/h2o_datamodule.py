@@ -45,7 +45,6 @@ class H2ODataset(Dataset):
         video_readers (list): A list of VideoReader instances, one for each video in the dataset.
         num_frames (int | None): The number of frames to include per video. If None, all frames are included.
         num_clips (int): The total number of clips in the dataset.
-        stride (int): The number of frames to skip between consecutive clips.
         start_video_idx (dict): Maps the first dataset index to the corresponding video reader.
 
     Args:
@@ -55,7 +54,6 @@ class H2ODataset(Dataset):
         max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
         max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
         num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
-        stride (int | None, optional): Number of frames to skip between consecutive clips. Defaults to num_frames.
 
     The dataset is constructed by creating VideoReader instances for each combination
     of scene and camera, using the provided dataset_prefix to construct the full path.
@@ -70,7 +68,6 @@ class H2ODataset(Dataset):
         max_width: int | None = None,
         max_height: int | None = None,
         num_frames: int | None = None,
-        stride: int | None = None,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -81,7 +78,6 @@ class H2ODataset(Dataset):
             max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
             max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
-            stride (int | None, optional): Number of frames to skip between consecutive clips. Defaults to num_frames.
 
         The dataset is constructed by creating VideoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
@@ -90,11 +86,6 @@ class H2ODataset(Dataset):
         self.video_readers = []
         self.num_clips = 0
         self.num_frames = num_frames
-
-        if stride is None:
-            self.stride = num_frames
-        else:
-            self.stride = stride
 
         # Maps the first dataset index to the corresponding video
         self.start_video_idx = {}
@@ -115,8 +106,7 @@ class H2ODataset(Dataset):
                         ),
                     )
                     self.start_video_idx[self.num_clips] = self.video_readers[-1]
-                    num_frames = len(self.video_readers[-1])
-                    self.num_clips += (num_frames - self.num_frames) // self.stride + 1
+                    self.num_clips += len(self.video_readers[-1]) // self.num_frames
 
     def __len__(self) -> int:
         """Get the total number of clips in the dataset.
@@ -127,11 +117,11 @@ class H2ODataset(Dataset):
         """
         return self.num_clips
 
-    def _get_video_and_start_frame(self, idx: int) -> tuple[VideoReader, int]:
+    def _get_video_and_start_frame(self, clip_idx: int) -> tuple[VideoReader, int]:
         """Get the video reader and start frame for a given dataset index.
 
         Args:
-            idx (int): The dataset index.
+            clip_idx (int): The dataset index.
 
         Returns:
             tuple[VideoReader, int]: A tuple containing the VideoReader instance
@@ -139,11 +129,11 @@ class H2ODataset(Dataset):
 
         """
         # Find the corresponding video
-        video_idx, video_reader = max((i, video) for i, video in self.start_video_idx.items() if i <= idx)
+        video_idx, video_reader = max((i, video) for i, video in self.start_video_idx.items() if i <= clip_idx)
 
         # Calculate the start frame of the clip within the video
-        clip_offset = idx - video_idx
-        start_frame = clip_offset * self.stride
+        clip_idx_in_video = clip_idx - video_idx
+        start_frame = self.num_frames * clip_idx_in_video
 
         return video_reader, start_frame
 
