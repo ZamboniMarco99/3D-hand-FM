@@ -106,7 +106,7 @@ class VideoVAE(pl.LightningModule):
             torch.Tensor: Loss value.
 
         """
-        x = batch
+        x, _ = batch
         # Permute the input tensor to match the expected shape for 3D convolutions
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)
@@ -124,7 +124,7 @@ class VideoVAE(pl.LightningModule):
             batch_idx (int): Index of the batch.
 
         """
-        x = batch
+        x, _ = batch
         # Permute the input tensor to match the expected shape for 3D convolutions
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         recon_x, mu, log_var = self(x)

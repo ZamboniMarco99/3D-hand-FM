@@ -1,10 +1,12 @@
 """Data module for H2O dataset.
 
 This module provides the H2ODataModule class, which is designed to handle
-multiple video files for machine learning tasks. It utilizes the VideoReader
-class to efficiently load and process video frames.
+multiple video sequences and corresponding MANO hand pose parameters from the H2O dataset
+for machine learning tasks. It utilizes the VideoReader class to efficiently load and
+process video frames, and the ManoReader class to load MANO parameters, across different
+scenes and camera views.
 
-H20 dataset has videos that range from 257 to 1239 frames
+The H2O dataset consists of videos ranging from 257 to 1239 frames in length.
 
 Example usage:
     datamodule = H2ODataModule(
@@ -30,19 +32,24 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from data.mano_reader import ManoReader
 from data.video_reader import VideoReader
 
 
 class H2ODataset(Dataset):
-    """A dataset class for handling H2O video data.
+    """A dataset class for handling H2O video data and MANO parameters.
 
     This class is designed to work with the H2O dataset, which consists of multiple
-    video sequences across different scenes and camera views. It utilizes the VideoReader
-    class to efficiently load and process video frames.
+    video sequences and corresponding MANO hand pose parameters across different
+    scenes and camera views. It utilizes the VideoReader class to efficiently load
+    and process video frames, and the ManoReader class to load MANO parameters.
 
     Attributes:
         video_readers (list): A list of VideoReader instances, one for each video in the dataset.
-        num_frames (int | None): The number of frames to include per video. If None, all frames are included.
+        mano_readers (list): A list of ManoReader instances, one for each MANO sequence in the dataset.
+        num_frames (int | None): The number of frames to include per video clip. If None, all frames are included.
+        num_clips (int): The total number of clips in the dataset.
+        clip_to_data (dict): Maps clip indices to corresponding video reader, MANO reader, and start frame.
 
     Args:
         dataset_prefix (str): The root directory path of the dataset.
@@ -50,10 +57,11 @@ class H2ODataset(Dataset):
         cameras (list[str]): List of camera names to include in the dataset.
         max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
         max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
-        num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+        num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
 
-    The dataset is constructed by creating VideoReader instances for each combination
-    of scene and camera, using the provided dataset_prefix to construct the full path.
+    The dataset is constructed by creating VideoReader and ManoReader instances for each
+    combination of scene and camera, using the provided dataset_prefix to construct the full path.
+    It handles both video frame data and corresponding MANO hand pose parameters.
 
     """
 
@@ -81,7 +89,12 @@ class H2ODataset(Dataset):
 
         """
         self.video_readers = []
+        self.mano_readers = []
+        self.num_clips = 0
         self.num_frames = num_frames
+
+        # Maps the first dataset index to the corresponding video reader and MANO reader
+        self.clip_to_data = {}
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
@@ -99,54 +112,87 @@ class H2ODataset(Dataset):
                         ),
                     )
 
+                    mano_dir_path = Path(scene_path) / directory / camera / "hand_pose_mano"
+                    self.mano_readers.append(
+                        ManoReader(
+                            mano_dir_path=mano_dir_path,
+                            assumed_fps=30,
+                            fmt_frame_fn=lambda x: f"{x:06d}.txt",
+                        ),
+                    )
+
+                    self.clip_to_data[self.num_clips] = (self.video_readers[-1], self.mano_readers[-1])
+                    self.num_clips += len(self.video_readers[-1]) // self.num_frames
+
     def __len__(self) -> int:
-        """Get the total number of videos in the dataset.
+        """Get the total number of clips in the dataset.
 
         Returns:
-            int: The number of videos in the dataset.
+            int: The number of clips in the dataset.
 
         """
-        return len(self.video_readers)
+        return self.num_clips
 
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        """Retrieve a video as a tensor of frames from the dataset.
-
-        This method loads frames from a single video specified by the index.
-        If the video is shorter than the desired number of frames, it extends
-        the video with zero-filled frames.
+    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, int]:
+        """Get the video reader, MANO reader, and start frame for a given clip index.
 
         Args:
-            idx (int): The index of the video to retrieve.
+            clip_idx (int): The index of the clip in the dataset.
 
         Returns:
-            torch.Tensor: A tensor containing frames of the video.
-                          Shape: (T, C, H, W), where T is the number of frames,
-                          C is the number of channels, H is the height, and W is the width.
+            tuple[VideoReader, ManoReader, int]: A tuple containing:
+                - The VideoReader instance for the clip.
+                - The ManoReader instance for the clip.
+                - The start frame index of the clip within its video.
+
+        """
+        # Find the corresponding video and MANO readers
+        video_idx, video_reader, mano_reader = max(
+            (i, video, mano) for i, (video, mano) in self.clip_to_data.items() if i <= clip_idx
+        )
+
+        # Calculate the start frame of the clip within the video
+        clip_idx_in_video = clip_idx - video_idx
+        start_frame = self.num_frames * clip_idx_in_video
+
+        return video_reader, mano_reader, start_frame
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip as a tensor of frames and corresponding MANO parameters from the dataset.
+
+        This method loads frames and MANO parameters from a single video clip specified by the index.
+
+        Args:
+            idx (int): The index of the video clip to retrieve.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
+                  C is the number of channels, H is the height, and W is the width.
+                - A tensor of MANO parameters with shape (T, M), where T is the number of frames
+                  and M is the number of MANO parameters.
 
         Raises:
             IndexError: If the provided index is out of range.
 
         """
-        if idx >= len(self.video_readers):
-            msg = f"Index {idx} out of range. Total videos: {len(self.video_readers)}"
+        if idx >= len(self):
+            msg = f"Index {idx} out of range. Total clips: {len(self)}"
             raise IndexError(msg)
 
-        reader = self.video_readers[idx]
+        video_reader, mano_reader, start_frame = self._get_clip_data(idx)
 
-        if len(reader) < self.num_frames:
-            # If video is shorter than the desired number of frames extend with zeros
-            frames = reader.get_frames(list(range(len(reader))))
-            frames.extend(np.zeros((self.num_frames - len(reader), *frames[0].shape)))
-        else:
-            frames = reader.get_frames(list(range(self.num_frames)))
+        frames = video_reader.get_frames(list(range(start_frame, start_frame + self.num_frames)))
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
         normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
         # Change shape from [H, W, C] to [C, H, W]
         normalized_frames = [np.transpose(frame, (2, 0, 1)) for frame in normalized_frames]
 
-        # Convert list of numpy arrays to a PyTorch tensor
-        return torch.from_numpy(np.stack(normalized_frames))
+        mano_params = mano_reader.get_mano_sequence(list(range(start_frame, start_frame + self.num_frames)))
+
+        # Convert list of numpy arrays to PyTorch tensors
+        return torch.from_numpy(np.stack(normalized_frames)), torch.from_numpy(np.stack(mano_params))
 
 
 class H2ODataModule(pl.LightningDataModule):
