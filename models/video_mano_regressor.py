@@ -242,7 +242,7 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: Predicted MANO parameters.
 
         """
-        features = self.encoder(x)
+        features = self.backbone(x)
         return self.regressor(features)
 
     def loss_function(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
