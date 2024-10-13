@@ -225,7 +225,6 @@ class VideoMANORegressor(pl.LightningModule):
 
         # Remove the classification head
         self.backbone.head = nn.Identity()
-        self.backbone.pooler = nn.Identity()
 
         # Regressor
         self.regressor = nn.Sequential(
@@ -243,20 +242,18 @@ class VideoMANORegressor(pl.LightningModule):
             x (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
 
         Returns:
-            torch.Tensor: Predicted MANO parameters for each frame, shape (batch_size, time, mano_params).
+            torch.Tensor: Predicted MANO parameters.
 
         """
-        features = self.backbone(x)  # Shape: (batch_size, time, backbone_out_features)
-
-        # Apply regressor to each frame's features
-        return self.regressor(features)  # Shape: (batch_size, time, mano_params)
+        features = self.backbone(x)
+        return self.regressor(features)
 
     def loss_function(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         """Calculate the loss for the model.
 
         Args:
-            y_pred (torch.Tensor): Predicted MANO parameters, shape (batch_size, time, mano_params).
-            y_true (torch.Tensor): Ground truth MANO parameters, shape (batch_size, time, mano_params).
+            y_pred (torch.Tensor): Predicted MANO parameters.
+            y_true (torch.Tensor): Ground truth MANO parameters.
 
         Returns:
             torch.Tensor: The computed loss.
