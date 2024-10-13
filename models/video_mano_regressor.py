@@ -223,6 +223,9 @@ class VideoMANORegressor(pl.LightningModule):
 
         backbone_out_features = get_mvit_v2_s_block_setting()[-1].output_channels
 
+        # Remove the classification head
+        self.backbone.head = nn.Identity()
+
         # Regressor
         self.regressor = nn.Sequential(
             nn.Linear(backbone_out_features, 512),
