@@ -327,9 +327,9 @@ class H2ODataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
             persistent_workers=True,
-            prefetch_factor=2,
+            prefetch_factor=4,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -343,7 +343,7 @@ class H2ODataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
             persistent_workers=True,
-            prefetch_factor=2,
+            prefetch_factor=4,
         )
