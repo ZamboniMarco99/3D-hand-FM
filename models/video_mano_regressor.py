@@ -16,8 +16,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 from torch.optim import Adam
-
-from models.mvit import MSBlockConfig, MViT, _mvit
+from torchvision.models.video.mvit import MSBlockConfig, MViT, _mvit
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -226,6 +225,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         # Remove the classification head
         self.backbone.head = nn.Identity()
+        self.backbone.pooler = nn.Identity()
 
         # Regressor
         self.regressor = nn.Sequential(
