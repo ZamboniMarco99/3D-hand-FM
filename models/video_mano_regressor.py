@@ -228,11 +228,11 @@ class VideoMANORegressor(pl.LightningModule):
 
         # Regressor
         self.regressor = nn.Sequential(
-            nn.Linear(backbone_out_features, 512),
+            nn.Linear(backbone_out_features, 1024),
             nn.ReLU(),
-            nn.Linear(512, 256),
+            nn.Linear(1024, 2048),
             nn.ReLU(),
-            nn.Linear(256, mano_params),
+            nn.Linear(2048, mano_params * num_frames),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -246,7 +246,8 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         features = self.backbone(x)
-        return self.regressor(features)
+        mano_params = self.regressor(features)
+        return mano_params.view(x.shape[0], -1, self.hparams.mano_params)
 
     def loss_function(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         """Calculate the loss for the model.
