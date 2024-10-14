@@ -260,7 +260,7 @@ class VideoReader:
                             new_height = int(new_width / aspect_ratio_img)
 
                         # Resize the image
-                        img = img.resize((new_width, new_height), Image.ANTIALIAS)
+                        img = img.resize((new_width, new_height), Image.Image.Resampling.LANCZOS)
 
                         # Crop the image to the target dimensions
                         left = (new_width - self.max_width) / 2
@@ -360,7 +360,7 @@ class VideoReader:
                             new_height = int(new_width / aspect_ratio_img)
 
                         # Resize the image
-                        img = img.resize((new_width, new_height), Image.ANTIALIAS)
+                        img = img.resize((new_width, new_height), Image.Image.Resampling.LANCZOS)
 
                         # Crop the image to the target dimensions
                         left = (new_width - self.max_width) / 2
