@@ -221,7 +221,7 @@ class VideoMANORegressor(pl.LightningModule):
         # MViT encoder
         if pretrained:
             self.backbone = _mvit_v2_s_pretrained(
-                MViT_V2_S_Weights.DEFAULT,
+                weights=MViT_V2_S_Weights.DEFAULT,
             )
         else:
             self.backbone = mvit_v2_s(
