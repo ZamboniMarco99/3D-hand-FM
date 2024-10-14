@@ -57,6 +57,7 @@ class VideoReader:
         chunk_size: int = DEFAULT_VIDEO_READER_CHUNK_SIZE,
         max_chunk_count: int = DEFAULT_VIDEO_READER_MAX_CHUNK_COUNT,
         fmt_frame_fn: Callable[[int], str] | None = None,
+        crop: bool = False,
     ) -> None:
         """Initialize the VideoReader.
 
@@ -74,6 +75,7 @@ class VideoReader:
                 Defaults to DEFAULT_VIDEO_READER_MAX_CHUNK_COUNT.
             fmt_frame_fn (Callable[[int], str] | None, optional): Function to transform frame indexes into filenames.
                 If provided, it should take an integer frame index and return a string filename. Defaults to None.
+            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
 
         Raises:
             ValueError: If video_path is None and frame_dir_path is not provided
@@ -91,6 +93,8 @@ class VideoReader:
         self.max_height = max_height
         self.assumed_fps = assumed_fps
         self.fmt_frame_fn = fmt_frame_fn
+        self.crop = crop
+
         if video_path is not None:
             video_cap = cv2.VideoCapture(video_path)
             self.fps = video_cap.get(cv2.CAP_PROP_FPS)
@@ -240,7 +244,34 @@ class VideoReader:
                 img = img[:, :, ::-1]
                 if self.max_width is not None or self.max_height is not None:
                     img_pil = Image.fromarray(img)
-                    img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
+                    if self.crop:
+                        # Calculate the aspect ratios
+                        aspect_ratio_img = img_pil.width / img_pil.height
+                        aspect_ratio_target = self.max_width / self.max_height
+
+                        # Resize based on the target aspect ratio
+                        if aspect_ratio_img > aspect_ratio_target:
+                            # Image is wider than the target aspect ratio
+                            new_height = self.max_height
+                            new_width = int(new_height * aspect_ratio_img)
+                        else:
+                            # Image is taller than the target aspect ratio
+                            new_width = self.max_width
+                            new_height = int(new_width / aspect_ratio_img)
+
+                        # Resize the image
+                        img_pil = img_pil.resize((new_width, new_height))
+
+                        # Crop the image to the target dimensions
+                        left = (new_width - self.max_width) / 2
+                        top = (new_height - self.max_height) / 2
+                        right = (new_width + self.max_width) / 2
+                        bottom = (new_height + self.max_height) / 2
+
+                        img_pil = img_pil.crop((left, top, right, bottom))
+
+                    else:
+                        img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
                     img = np.array(img_pil)
                 imgs.append(img)
             else:
@@ -313,6 +344,34 @@ class VideoReader:
                 if self.max_width is not None or self.max_height is not None:
                     img_pil = Image.fromarray(img)
                     img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
+                    if self.crop:
+                        # Calculate the aspect ratios
+                        aspect_ratio_img = img_pil.width / img_pil.height
+                        aspect_ratio_target = self.max_width / self.max_height
+
+                        # Resize based on the target aspect ratio
+                        if aspect_ratio_img > aspect_ratio_target:
+                            # Image is wider than the target aspect ratio
+                            new_height = self.max_height
+                            new_width = int(new_height * aspect_ratio_img)
+                        else:
+                            # Image is taller than the target aspect ratio
+                            new_width = self.max_width
+                            new_height = int(new_width / aspect_ratio_img)
+
+                        # Resize the image
+                        img_pil = img_pil.resize((new_width, new_height))
+
+                        # Crop the image to the target dimensions
+                        left = (new_width - self.max_width) / 2
+                        top = (new_height - self.max_height) / 2
+                        right = (new_width + self.max_width) / 2
+                        bottom = (new_height + self.max_height) / 2
+
+                        img_pil = img_pil.crop((left, top, right, bottom))
+
+                    else:
+                        img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
                     img = np.array(img_pil)
                 imgs.append(img)
             else:

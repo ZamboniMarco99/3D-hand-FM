@@ -73,6 +73,7 @@ class H2ODataset(Dataset):
         max_width: int | None = None,
         max_height: int | None = None,
         num_frames: int | None = None,
+        crop: bool = False,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -83,9 +84,11 @@ class H2ODataset(Dataset):
             max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
             max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
 
         The dataset is constructed by creating VideoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
+        If crop is True, videos will be cropped to the exact max_width and max_height sizes.
 
         """
         self.video_readers = []
@@ -109,6 +112,7 @@ class H2ODataset(Dataset):
                             max_width=max_width,
                             max_height=max_height,
                             fmt_frame_fn=lambda x: f"{x:06d}.png",
+                            crop=crop,
                         ),
                     )
 
@@ -258,6 +262,7 @@ class H2ODataModule(pl.LightningDataModule):
         batch_size: int = 32,
         num_frames: int = 300,
         num_workers: int = 8,
+        crop: bool = False,
     ) -> None:
         """Initialize the H2ODataModule.
 
@@ -269,6 +274,7 @@ class H2ODataModule(pl.LightningDataModule):
             batch_size (int, optional): The batch size for DataLoaders. Defaults to 32.
             num_frames (int, optional): Number of frames to include per video. Defaults to 300.
             num_workers (int, optional): Number of worker processes for data loading. Defaults to 8.
+            crop (bool, optional): Whether to crop the frames to exact max_width and max_height. Defaults to False.
 
         """
         super().__init__()
@@ -279,6 +285,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_frames = num_frames
         self.num_workers = num_workers
+        self.crop = crop
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -302,6 +309,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_width=self.max_width,
             max_height=self.max_height,
             num_frames=self.num_frames,
+            crop=self.crop,
         )
         self.val_dataset = H2ODataset(
             dataset_prefix=self.dataset_prefix,
@@ -310,6 +318,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_width=self.max_width,
             max_height=self.max_height,
             num_frames=self.num_frames,
+            crop=self.crop,
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")
@@ -327,9 +336,9 @@ class H2ODataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
             persistent_workers=True,
-            prefetch_factor=2,
+            prefetch_factor=4,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -343,7 +352,7 @@ class H2ODataModule(pl.LightningDataModule):
             self.val_dataset,
             batch_size=self.batch_size,
             num_workers=self.num_workers,
-            pin_memory=True,
+            pin_memory=False,
             persistent_workers=True,
-            prefetch_factor=2,
+            prefetch_factor=4,
         )
