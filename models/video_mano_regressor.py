@@ -280,7 +280,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         y_pred = self(x)
         loss = self.loss_function(y_pred, y)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
 
         # Additional metrics
         mse = F.mse_loss(y_pred, y, reduction="mean")
@@ -305,7 +305,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         y_pred = self(x)
         loss = self.loss_function(y_pred, y)
-        self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
 
         # Additional metrics
         mse = F.mse_loss(y_pred, y, reduction="mean")
