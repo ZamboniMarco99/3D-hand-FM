@@ -27,6 +27,7 @@ def main(cfg: DictConfig) -> None:
         num_frames=cfg.data.num_frames,
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
+        crop=cfg.data.pretrained,
     )
     logger.info("DataModule initialized")
 
@@ -43,6 +44,7 @@ def main(cfg: DictConfig) -> None:
         height=height,
         width=width,
         learning_rate=cfg.model.learning_rate,
+        pretrained=cfg.data.pretrained,
     )
     logger.info("Model initialized")
 

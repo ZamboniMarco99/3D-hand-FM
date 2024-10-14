@@ -16,7 +16,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F  # noqa: N812
 from torch.optim import Adam
-from torchvision.models.video.mvit import MSBlockConfig, MViT, _mvit
+from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
+from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -197,6 +198,7 @@ class VideoMANORegressor(pl.LightningModule):
         width: int,
         mano_params: int = 122,  # Two hands, 61 parameters per hand
         learning_rate: float = 1e-3,  # noqa: ARG002
+        pretrained: bool = False,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -206,6 +208,7 @@ class VideoMANORegressor(pl.LightningModule):
             width (int): Width of each video frame.
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 122 (61 per hand).
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -216,10 +219,15 @@ class VideoMANORegressor(pl.LightningModule):
         self.save_hyperparameters()
 
         # MViT encoder
-        self.backbone = mvit_v2_s(
-            spatial_size=(height, width),
-            temporal_size=num_frames,
-        )
+        if pretrained:
+            self.backbone = _mvit_v2_s_pretrained(
+                MViT_V2_S_Weights.DEFAULT,
+            )
+        else:
+            self.backbone = mvit_v2_s(
+                spatial_size=(height, width),
+                temporal_size=num_frames,
+            )
 
         backbone_out_features = get_mvit_v2_s_block_setting()[-1].output_channels
 
