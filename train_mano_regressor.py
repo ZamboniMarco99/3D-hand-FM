@@ -61,7 +61,7 @@ def main(cfg: DictConfig) -> None:
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
         logger=wandb_logger,
-        log_every_n_steps=1,
+        log_every_n_steps=16,
     )
     logger.info("Trainer initialized")
 
