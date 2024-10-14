@@ -244,7 +244,34 @@ class VideoReader:
                 img = img[:, :, ::-1]
                 if self.max_width is not None or self.max_height is not None:
                     img_pil = Image.fromarray(img)
-                    img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
+                    if self.crop:
+                        # Calculate the aspect ratios
+                        aspect_ratio_img = img_pil.width / img_pil.height
+                        aspect_ratio_target = self.max_width / self.max_height
+
+                        # Resize based on the target aspect ratio
+                        if aspect_ratio_img > aspect_ratio_target:
+                            # Image is wider than the target aspect ratio
+                            new_height = self.max_height
+                            new_width = int(new_height * aspect_ratio_img)
+                        else:
+                            # Image is taller than the target aspect ratio
+                            new_width = self.max_width
+                            new_height = int(new_width / aspect_ratio_img)
+
+                        # Resize the image
+                        img = img.resize((new_width, new_height), Image.ANTIALIAS)
+
+                        # Crop the image to the target dimensions
+                        left = (new_width - self.max_width) / 2
+                        top = (new_height - self.max_height) / 2
+                        right = (new_width + self.max_width) / 2
+                        bottom = (new_height + self.max_height) / 2
+
+                        img_pil = img_pil.crop((left, top, right, bottom))
+
+                    else:
+                        img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
                     img = np.array(img_pil)
                 imgs.append(img)
             else:
