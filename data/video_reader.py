@@ -318,21 +318,33 @@ class VideoReader:
                     img_pil = Image.fromarray(img)
                     img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
                     if self.crop:
-                        # Get current dimensions
-                        current_width, current_height = img_pil.size
+                        # Calculate the aspect ratios
+                        aspect_ratio_img = img_pil.width / img_pil.height
+                        aspect_ratio_target = self.max_width / self.max_height
 
-                        # Calculate dimensions to crop
-                        crop_width = min(current_width, self.max_width)
-                        crop_height = min(current_height, self.max_height)
+                        # Resize based on the target aspect ratio
+                        if aspect_ratio_img > aspect_ratio_target:
+                            # Image is wider than the target aspect ratio
+                            new_height = self.max_height
+                            new_width = int(new_height * aspect_ratio_img)
+                        else:
+                            # Image is taller than the target aspect ratio
+                            new_width = self.max_width
+                            new_height = int(new_width / aspect_ratio_img)
 
-                        # Calculate crop box (left, upper, right, lower)
-                        left = (current_width - crop_width) // 2
-                        top = (current_height - crop_height) // 2
-                        right = left + crop_width
-                        bottom = top + crop_height
+                        # Resize the image
+                        img = img.resize((new_width, new_height), Image.ANTIALIAS)
 
-                        # Crop the image
+                        # Crop the image to the target dimensions
+                        left = (new_width - self.max_width) / 2
+                        top = (new_height - self.max_height) / 2
+                        right = (new_width + self.max_width) / 2
+                        bottom = (new_height + self.max_height) / 2
+
                         img_pil = img_pil.crop((left, top, right, bottom))
+
+                    else:
+                        img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
                     img = np.array(img_pil)
                 imgs.append(img)
             else:
