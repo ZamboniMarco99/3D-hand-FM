@@ -57,6 +57,7 @@ class VideoReader:
         chunk_size: int = DEFAULT_VIDEO_READER_CHUNK_SIZE,
         max_chunk_count: int = DEFAULT_VIDEO_READER_MAX_CHUNK_COUNT,
         fmt_frame_fn: Callable[[int], str] | None = None,
+        crop: bool = False,
     ) -> None:
         """Initialize the VideoReader.
 
@@ -74,6 +75,7 @@ class VideoReader:
                 Defaults to DEFAULT_VIDEO_READER_MAX_CHUNK_COUNT.
             fmt_frame_fn (Callable[[int], str] | None, optional): Function to transform frame indexes into filenames.
                 If provided, it should take an integer frame index and return a string filename. Defaults to None.
+            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
 
         Raises:
             ValueError: If video_path is None and frame_dir_path is not provided
@@ -91,6 +93,8 @@ class VideoReader:
         self.max_height = max_height
         self.assumed_fps = assumed_fps
         self.fmt_frame_fn = fmt_frame_fn
+        self.crop = crop
+
         if video_path is not None:
             video_cap = cv2.VideoCapture(video_path)
             self.fps = video_cap.get(cv2.CAP_PROP_FPS)
@@ -313,6 +317,22 @@ class VideoReader:
                 if self.max_width is not None or self.max_height is not None:
                     img_pil = Image.fromarray(img)
                     img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
+                    if self.crop:
+                        # Get current dimensions
+                        current_width, current_height = img_pil.size
+
+                        # Calculate dimensions to crop
+                        crop_width = min(current_width, self.max_width)
+                        crop_height = min(current_height, self.max_height)
+
+                        # Calculate crop box (left, upper, right, lower)
+                        left = (current_width - crop_width) // 2
+                        top = (current_height - crop_height) // 2
+                        right = left + crop_width
+                        bottom = top + crop_height
+
+                        # Crop the image
+                        img_pil = img_pil.crop((left, top, right, bottom))
                     img = np.array(img_pil)
                 imgs.append(img)
             else:

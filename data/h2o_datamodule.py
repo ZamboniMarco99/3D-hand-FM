@@ -73,6 +73,7 @@ class H2ODataset(Dataset):
         max_width: int | None = None,
         max_height: int | None = None,
         num_frames: int | None = None,
+        crop: bool = False,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -83,9 +84,11 @@ class H2ODataset(Dataset):
             max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
             max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
 
         The dataset is constructed by creating VideoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
+        If crop is True, videos will be cropped to the exact max_width and max_height sizes.
 
         """
         self.video_readers = []
@@ -109,6 +112,7 @@ class H2ODataset(Dataset):
                             max_width=max_width,
                             max_height=max_height,
                             fmt_frame_fn=lambda x: f"{x:06d}.png",
+                            crop=crop,
                         ),
                     )
 
