@@ -2,7 +2,7 @@
 
 defaults:
   - _self_
-  - data: h20
+  - data: h20_pretrained
 
 task_name: "train_mano_regressor"
 
@@ -14,12 +14,12 @@ model:
   learning_rate: 1e-3
 
 logger:
-  name: "test_run"
+  name: "run_pretrained"
   save_dir: "./logs"
   group: "train_mano_regressor"
-  log_model: False # Don't log model weights
+  log_model: True
 
 trainer:
-  max_epochs: 20
+  max_epochs: 200
   accelerator: "auto"
-  devices: 1
+  devices: 4
