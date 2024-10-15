@@ -32,6 +32,7 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import functional as F  # noqa: N812
 
 from data.mano_reader import ManoReader
 from data.video_reader import VideoReader
@@ -232,7 +233,10 @@ class H2ODataset(Dataset):
             mano_params = self._get_mano_params.__wrapped__(mano_reader, start_frame, self.num_frames)
 
         # Convert list of numpy arrays to PyTorch tensors
-        return torch.from_numpy(np.stack(frames)), torch.from_numpy(np.stack(mano_params))
+        clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        mano = torch.from_numpy(np.stack(mano_params))
+
+        return clip, mano
 
 
 class H2ODataModule(pl.LightningDataModule):
