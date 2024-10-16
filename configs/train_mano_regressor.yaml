@@ -1,4 +1,4 @@
-# Hydra config for training vae
+# Hydra config for training mano regressor
 
 defaults:
   - _self_
