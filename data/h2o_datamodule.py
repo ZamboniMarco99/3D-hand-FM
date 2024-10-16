@@ -350,6 +350,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            cache=False,
         )
         self.val_dataset = H2ODataset(
             dataset_prefix=self.dataset_prefix,
@@ -359,6 +360,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            cache=False,
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")
