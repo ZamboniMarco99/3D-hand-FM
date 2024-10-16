@@ -1,6 +1,7 @@
 """Module containing the main function for training."""
 
 import logging
+import os
 
 import hydra
 import pytorch_lightning as pl
@@ -43,6 +44,7 @@ def main(cfg: DictConfig) -> None:
         num_frames=cfg.data.num_frames,
         height=height,
         width=width,
+        mano_root=os.environ.get("MANO_ROOT"),
         learning_rate=cfg.model.learning_rate,
         pretrained=cfg.data.pretrained,
     )

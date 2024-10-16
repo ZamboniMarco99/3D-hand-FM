@@ -19,6 +19,8 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
+from models.utils import get_mano_joints
+
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
     """Get the block setting for MViT v2 Small architecture.
@@ -196,6 +198,7 @@ class VideoMANORegressor(pl.LightningModule):
         num_frames: int,
         height: int,
         width: int,
+        mano_root: str,  # noqa: ARG002
         mano_params: int = 122,  # Two hands, 61 parameters per hand
         learning_rate: float = 1e-3,  # noqa: ARG002
         pretrained: bool = False,
@@ -206,6 +209,7 @@ class VideoMANORegressor(pl.LightningModule):
             num_frames (int): Number of frames in each video sequence.
             height (int): Height of each video frame.
             width (int): Width of each video frame.
+            mano_root (str): Root path of the MANO model files.
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 122 (61 per hand).
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
@@ -318,8 +322,19 @@ class VideoMANORegressor(pl.LightningModule):
         # Additional metrics
         mse = F.mse_loss(y_pred, y, reduction="mean")
         mae = F.l1_loss(y_pred, y, reduction="mean")
+
+        pred_left_hand_joints, pred_right_hand_joints = get_mano_joints(y_pred, mano_root=self.hparams.mano_root)
+        target_left_hand_joints, target_right_hand_joints = get_mano_joints(y, mano_root=self.hparams.mano_root)
+        left_mje = torch.linalg.vector_norm(pred_left_hand_joints - target_left_hand_joints, dim=-1).mean(dim=-1).mean()
+        right_mje = (
+            torch.linalg.vector_norm(pred_right_hand_joints - target_right_hand_joints, dim=-1).mean(dim=-1).mean()
+        )
+
         self.log("val/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.
