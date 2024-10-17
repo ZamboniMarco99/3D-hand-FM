@@ -35,6 +35,8 @@ def get_mano_joints(
     """
     # Get the device of mano_params
     device = mano_params.device
+    batch_size = mano_params.shape[0]
+    num_frames = mano_params.shape[1]
 
     # Initialize MANO layers for left and right hands
     mano_left = ManoLayer(
@@ -53,8 +55,12 @@ def get_mano_joints(
     ).to(device)
 
     # Split the parameters for left and right hands
-    left_params = mano_params[:, :61]
-    right_params = mano_params[:, 61:]
+    left_params = mano_params[:, :, :61]
+    right_params = mano_params[:, :, 61:]
+
+    # Push the time dimension in the batch dimension
+    left_params = left_params.view(-1, left_params.shape[2])
+    right_params = right_params.view(-1, right_params.shape[2])
 
     # Process left hand
     _, left_hand_joints = mano_left(
@@ -69,5 +75,9 @@ def get_mano_joints(
         right_params[:, 51:],  # shape
         right_params[:, :3],  # translation
     )
+
+    # Reshape the joints to match the original batch size and time dimension
+    left_hand_joints = left_hand_joints.view(batch_size, num_frames, -1, 3)
+    right_hand_joints = right_hand_joints.view(batch_size, num_frames, -1, 3)
 
     return left_hand_joints, right_hand_joints
