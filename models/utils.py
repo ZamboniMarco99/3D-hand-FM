@@ -6,7 +6,7 @@ that are helpful in processing data, executing MANO models, and other related ta
 """
 
 import torch
-from manopth import ManoLayer
+from manopth.manolayer import ManoLayer
 
 
 def get_mano_joints(
