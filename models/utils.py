@@ -31,19 +31,22 @@ def get_mano_joints(
             - Right hand joints: Tensor of shape (batch_size, num_joints, 3)
 
     """
+    # Get the device of mano_params
+    device = mano_params.device
+
     # Initialize MANO layers for left and right hands
     mano_left = ManoLayer(
         mano_root=mano_root,
         use_pca=use_pca,
         flat_hand_mean=flat_hand_mean,
         side="left",
-    )
+    ).to(device)
     mano_right = ManoLayer(
         mano_root=mano_root,
         use_pca=use_pca,
         flat_hand_mean=flat_hand_mean,
         side="right",
-    )
+    ).to(device)
 
     # Split the parameters for left and right hands
     left_params = mano_params[:, :61]
