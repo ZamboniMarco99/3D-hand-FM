@@ -12,8 +12,9 @@ from manopth.manolayer import ManoLayer
 def get_mano_joints(
     mano_params: torch.Tensor,
     mano_root: str,
-    use_pca: bool = True,
-    flat_hand_mean: bool = False,
+    ncomps: int = 45,
+    use_pca: bool = False,
+    flat_hand_mean: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Execute the MANO model to generate hand joints.
 
@@ -22,8 +23,9 @@ def get_mano_joints(
             Expected shape: (batch_size, 122) where 122 = 61 (left hand) + 61 (right hand)
             Each 61 = 3 (translation) + 45 (pose) + 10 (shape) for each hand.
         mano_root (str): Path to the directory containing MANO model files.
-        use_pca (bool, optional): Whether to use PCA for pose parameters. Defaults to True.
-        flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to False.
+        ncomps (int, optional): Number of PCA components. Defaults to 45.
+        use_pca (bool, optional): Whether to use PCA for pose parameters. Defaults to False.
+        flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to True.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -37,12 +39,14 @@ def get_mano_joints(
     # Initialize MANO layers for left and right hands
     mano_left = ManoLayer(
         mano_root=mano_root,
+        ncomps=ncomps,
         use_pca=use_pca,
         flat_hand_mean=flat_hand_mean,
         side="left",
     ).to(device)
     mano_right = ManoLayer(
         mano_root=mano_root,
+        ncomps=ncomps,
         use_pca=use_pca,
         flat_hand_mean=flat_hand_mean,
         side="right",
