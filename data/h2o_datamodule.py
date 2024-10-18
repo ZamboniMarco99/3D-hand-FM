@@ -25,12 +25,14 @@ Example usage:
 
 import logging
 import os
+from functools import cache
 from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import functional as F  # noqa: N812
 
 from data.mano_reader import ManoReader
 from data.video_reader import VideoReader
@@ -74,6 +76,7 @@ class H2ODataset(Dataset):
         max_height: int | None = None,
         num_frames: int | None = None,
         crop: bool = False,
+        cache: bool = True,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -85,17 +88,19 @@ class H2ODataset(Dataset):
             max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
             crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
+            cache (bool, optional): If True, enable caching of video frames. Defaults to True.
 
-        The dataset is constructed by creating VideoReader instances for each combination
+        The dataset is constructed by creating VideoReader and ManoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
         If crop is True, videos will be cropped to the exact max_width and max_height sizes.
+        If cache is True, data will be cached in memory for faster access.
 
         """
         self.video_readers = []
         self.mano_readers = []
         self.num_clips = 0
         self.num_frames = num_frames
-
+        self.cache = cache
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
 
@@ -161,6 +166,40 @@ class H2ODataset(Dataset):
 
         return video_reader, mano_reader, start_frame
 
+    @staticmethod
+    @cache
+    def _get_video_frames(video_reader: VideoReader, start_frame: int, num_frames: int) -> list[np.ndarray]:
+        """Get video frames from the video reader for a given clip.
+
+        Args:
+            video_reader (VideoReader): The video reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+
+        Returns:
+            list[np.ndarray]: A list of video frames with shape (H, W, C).
+
+        """
+        frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames)))
+
+        # Normalize frames from uint8 to float32 with values between 0 and 1
+        normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
+        # Change shape from [H, W, C] to [C, H, W]
+        return [np.transpose(frame, (2, 0, 1)) for frame in normalized_frames]
+
+    @staticmethod
+    @cache
+    def _get_mano_params(mano_reader: ManoReader, start_frame: int, num_frames: int) -> list[np.ndarray]:
+        """Get MANO parameters from the MANO reader for a given clip.
+
+        Args:
+            mano_reader (ManoReader): The MANO reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+
+        """
+        return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
+
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Retrieve a video clip as a tensor of frames and corresponding MANO parameters from the dataset.
 
@@ -186,17 +225,18 @@ class H2ODataset(Dataset):
 
         video_reader, mano_reader, start_frame = self._get_clip_data(idx)
 
-        frames = video_reader.get_frames(list(range(start_frame, start_frame + self.num_frames)))
-
-        # Normalize frames from uint8 to float32 with values between 0 and 1
-        normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
-        # Change shape from [H, W, C] to [C, H, W]
-        normalized_frames = [np.transpose(frame, (2, 0, 1)) for frame in normalized_frames]
-
-        mano_params = mano_reader.get_mano_sequence(list(range(start_frame, start_frame + self.num_frames)))
+        if self.cache:
+            frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
+            mano_params = self._get_mano_params(mano_reader, start_frame, self.num_frames)
+        else:
+            frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames)
+            mano_params = self._get_mano_params.__wrapped__(mano_reader, start_frame, self.num_frames)
 
         # Convert list of numpy arrays to PyTorch tensors
-        return torch.from_numpy(np.stack(normalized_frames)), torch.from_numpy(np.stack(mano_params))
+        clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        mano = torch.from_numpy(np.stack(mano_params))
+
+        return clip, mano
 
 
 class H2ODataModule(pl.LightningDataModule):
@@ -310,6 +350,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            cache=False,
         )
         self.val_dataset = H2ODataset(
             dataset_prefix=self.dataset_prefix,
@@ -319,6 +360,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            cache=False,
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")
