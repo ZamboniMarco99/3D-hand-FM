@@ -189,13 +189,22 @@ class H2ODataset(Dataset):
 
     @staticmethod
     @cache
-    def _get_mano_params(mano_reader: ManoReader, start_frame: int, num_frames: int) -> list[np.ndarray]:
+    def _get_mano_params(
+        mano_reader: ManoReader,
+        start_frame: int,
+        num_frames: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Get MANO parameters from the MANO reader for a given clip.
 
         Args:
             mano_reader (ManoReader): The MANO reader instance.
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains MANO parameters for the left hand for each frame.
+                - The second list contains MANO parameters for the right hand for each frame.
 
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
@@ -227,16 +236,21 @@ class H2ODataset(Dataset):
 
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
-            mano_params = self._get_mano_params(mano_reader, start_frame, self.num_frames)
+            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames)
-            mano_params = self._get_mano_params.__wrapped__(mano_reader, start_frame, self.num_frames)
+            mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
+                mano_reader,
+                start_frame,
+                self.num_frames,
+            )
 
         # Convert list of numpy arrays to PyTorch tensors
         clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
-        mano = torch.from_numpy(np.stack(mano_params))
+        mano_left = torch.from_numpy(np.stack(mano_params_left))
+        mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        return clip, mano
+        return clip, mano_left, mano_right
 
 
 class H2ODataModule(pl.LightningDataModule):
