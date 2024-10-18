@@ -275,18 +275,28 @@ class VideoMANORegressor(pl.LightningModule):
 
         return left_hand_params, right_hand_params
 
-    def loss_function(self, y_pred: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
+    def loss_function(
+        self,
+        y_pred_left: torch.Tensor,
+        y_pred_right: torch.Tensor,
+        y_true_left: torch.Tensor,
+        y_true_right: torch.Tensor,
+    ) -> torch.Tensor:
         """Calculate the loss for the model.
 
         Args:
-            y_pred (torch.Tensor): Predicted MANO parameters.
-            y_true (torch.Tensor): Ground truth MANO parameters.
+            y_pred_left (torch.Tensor): Predicted MANO parameters for left hand.
+            y_pred_right (torch.Tensor): Predicted MANO parameters for right hand.
+            y_true_left (torch.Tensor): Ground truth MANO parameters for left hand.
+            y_true_right (torch.Tensor): Ground truth MANO parameters for right hand.
 
         Returns:
             torch.Tensor: The computed loss.
 
         """
-        return F.mse_loss(y_pred, y_true)
+        loss_left = F.mse_loss(y_pred_left, y_true_left)
+        loss_right = F.mse_loss(y_pred_right, y_true_right)
+        return loss_left + loss_right
 
     def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:  # noqa: ARG002
         """Training step of the VideoMANORegressor model.
@@ -305,14 +315,19 @@ class VideoMANORegressor(pl.LightningModule):
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
         y_pred_left, y_pred_right = self(x)
-        loss = self.loss_function(y_pred_left, y_left) + self.loss_function(y_pred_right, y_right)
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        loss = self.loss_function(y_pred_left, y_pred_right, y_left, y_right)
 
         # Additional metrics
-        mse = F.mse_loss(y_pred_left, y_left) + F.mse_loss(y_pred_right, y_right)
-        mae = F.l1_loss(y_pred_left, y_left) + F.l1_loss(y_pred_right, y_right)
-        self.log("train/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
+        left_mse = F.mse_loss(y_pred_left, y_left)
+        right_mse = F.mse_loss(y_pred_right, y_right)
+        left_mae = F.l1_loss(y_pred_left, y_left)
+        right_mae = F.l1_loss(y_pred_right, y_right)
+
+        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("train/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -330,12 +345,7 @@ class VideoMANORegressor(pl.LightningModule):
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
         y_pred_left, y_pred_right = self(x)
-        loss = self.loss_function(y_pred_left, y_left) + self.loss_function(y_pred_right, y_right)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-
-        # Additional metrics
-        mse = F.mse_loss(y_pred_left, y_left) + F.mse_loss(y_pred_right, y_right)
-        mae = F.l1_loss(y_pred_left, y_left) + F.l1_loss(y_pred_right, y_right)
+        loss = self.loss_function(y_pred_left, y_pred_right, y_left, y_right)
 
         pred_left_hand_joints, pred_right_hand_joints = get_mano_joints(
             y_pred_left,
@@ -347,13 +357,22 @@ class VideoMANORegressor(pl.LightningModule):
             y_right,
             mano_root=self.hparams.mano_root,
         )
+
+        # Additional metrics
         left_mje = torch.linalg.vector_norm(pred_left_hand_joints - target_left_hand_joints, dim=-1).mean(dim=-1).mean()
         right_mje = (
             torch.linalg.vector_norm(pred_right_hand_joints - target_right_hand_joints, dim=-1).mean(dim=-1).mean()
         )
+        left_mse = F.mse_loss(y_pred_left, y_left)
+        right_mse = F.mse_loss(y_pred_right, y_right)
+        left_mae = F.l1_loss(y_pred_left, y_left)
+        right_mae = F.l1_loss(y_pred_right, y_right)
 
-        self.log("val/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
