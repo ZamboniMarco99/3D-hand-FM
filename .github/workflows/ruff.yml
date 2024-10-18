@@ -28,6 +28,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: |
             **/pyproject.toml
+      - name: Create virtual environment
+        run: uv venv
       - name: Install build dependencies
         run: uv pip install pip setuptools
       - name: Install dependencies
