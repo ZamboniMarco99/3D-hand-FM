@@ -53,18 +53,27 @@ class ManoReader:
         self.mano_len = len(list(self.mano_dir_path.glob("*.txt")))
 
     @staticmethod
-    def decode_mano(mano_params: np.ndarray) -> dict:
-        """Decode MANO parameters from a numpy array.
+    def decode_mano(mano_params: np.ndarray) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+        """Decode MANO parameters from a numpy array into separate dictionaries for left and right hands.
 
         Args:
             mano_params (np.ndarray): Numpy array containing MANO parameters for both hands.
+                Expected shape: (124,) where indices correspond to:
+                - 1-3: left hand translation
+                - 4-51: left hand pose (48 parameters)
+                - 52-61: left hand shape (10 parameters)
+                - 63-65: right hand translation
+                - 66-113: right hand pose (48 parameters)
+                - 114-123: right hand shape (10 parameters)
 
         Returns:
-            dict: Dictionary containing decoded MANO parameters for left and right hands,
-                  including translation, pose, and shape for each hand.
+            tuple[dict[str, np.ndarray], dict[str, np.ndarray]]: A tuple containing two dictionaries:
+                - The first dictionary contains MANO parameters for the left hand.
+                - The second dictionary contains MANO parameters for the right hand.
+                Each dictionary has keys 'tran', 'pose', and 'shape' with corresponding numpy array values.
 
         """
-        return {
+        mano_params = {
             "left_tran": mano_params[1:4].astype(np.float32),
             "left_pose": mano_params[4:52].astype(np.float32),
             "left_shape": mano_params[52:62].astype(np.float32),
@@ -73,14 +82,31 @@ class ManoReader:
             "right_shape": mano_params[114:124].astype(np.float32),
         }
 
-    def get_mano(self, frame_idx: int) -> dict:
+        mano_params_left = {
+            "tran": mano_params["left_tran"],
+            "pose": mano_params["left_pose"],
+            "shape": mano_params["left_shape"],
+        }
+        mano_params_right = {
+            "tran": mano_params["right_tran"],
+            "pose": mano_params["right_pose"],
+            "shape": mano_params["right_shape"],
+        }
+
+        return mano_params_left, mano_params_right
+
+    def get_mano(self, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
         """Retrieve MANO parameters for a single frame.
 
         Args:
             frame_idx (int): The index of the frame to retrieve.
 
         Returns:
-            dict: Dictionary containing raw MANO parameters for the specified frame.
+            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays:
+                - The first array contains MANO parameters for the left hand.
+                - The second array contains MANO parameters for the right hand.
+                Each array has shape (61,) where the first 3 elements are translation,
+                the next 45 are pose parameters, and the last 10 are shape parameters.
 
         Raises:
             FileNotFoundError: If the MANO file for the specified frame is not found.
@@ -91,20 +117,30 @@ class ManoReader:
         if not file_path.exists():
             message = f"MANO file at {file_path} not found for frame {frame_idx}"
             raise FileNotFoundError(message)
-        mano_params = self.decode_mano(np.loadtxt(file_path, dtype=np.float32))
-        return np.concatenate(list(mano_params.values()))
+        mano_params_left, mano_params_right = self.decode_mano(np.loadtxt(file_path, dtype=np.float32))
+        return np.concatenate(list(mano_params_left.values())), np.concatenate(list(mano_params_right.values()))
 
-    def get_mano_sequence(self, frame_idxs: list[int]) -> list[np.ndarray]:
+    def get_mano_sequence(self, frame_idxs: list[int]) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Retrieve MANO parameters for a sequence of frames.
 
         Args:
             frame_idxs (list[int]): List of frame indices to retrieve.
 
         Returns:
-            list[np.ndarray]: List of MANO parameters for the specified frames.
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists:
+                - The first list contains MANO parameters for the left hand for each frame.
+                - The second list contains MANO parameters for the right hand for each frame.
+                Each numpy array in the lists has shape (61,) where the first 3 elements are translation,
+                the next 45 are pose parameters, and the last 10 are shape parameters.
 
         """
-        return [self.get_mano(frame_idx) for frame_idx in frame_idxs]
+        left_hands = []
+        right_hands = []
+        for frame_idx in frame_idxs:
+            left, right = self.get_mano(frame_idx)
+            left_hands.append(left)
+            right_hands.append(right)
+        return left_hands, right_hands
 
     def __len__(self) -> int:
         """Get the total number of MANO files.

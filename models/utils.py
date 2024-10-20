@@ -10,7 +10,8 @@ from manopth.manolayer import ManoLayer
 
 
 def get_mano_joints(
-    mano_params: torch.Tensor,
+    mano_params_left: torch.Tensor,
+    mano_params_right: torch.Tensor,
     mano_root: str,
     ncomps: int = 45,
     use_pca: bool = False,
@@ -19,9 +20,10 @@ def get_mano_joints(
     """Execute the MANO model to generate hand joints.
 
     Args:
-        mano_params (torch.Tensor): Tensor containing MANO parameters for both hands concatenated.
-            Expected shape: (batch_size, 122) where 122 = 61 (left hand) + 61 (right hand)
-            Each 61 = 3 (translation) + 45 (pose) + 10 (shape) for each hand.
+        mano_params_left (torch.Tensor): Tensor containing MANO parameters for the left hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
+        mano_params_right (torch.Tensor): Tensor containing MANO parameters for the right hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano_root (str): Path to the directory containing MANO model files.
         ncomps (int, optional): Number of PCA components. Defaults to 45.
         use_pca (bool, optional): Whether to use PCA for pose parameters. Defaults to False.
@@ -34,9 +36,9 @@ def get_mano_joints(
 
     """
     # Get the device of mano_params
-    device = mano_params.device
-    batch_size = mano_params.shape[0]
-    num_frames = mano_params.shape[1]
+    device = mano_params_left.device
+    batch_size = mano_params_left.shape[0]
+    num_frames = mano_params_left.shape[1]
 
     # Initialize MANO layers for left and right hands
     mano_left = ManoLayer(
@@ -54,13 +56,9 @@ def get_mano_joints(
         side="right",
     ).to(device)
 
-    # Split the parameters for left and right hands
-    left_params = mano_params[:, :, :61]
-    right_params = mano_params[:, :, 61:]
-
     # Push the time dimension in the batch dimension
-    left_params = left_params.view(-1, left_params.shape[2])
-    right_params = right_params.view(-1, right_params.shape[2])
+    left_params = mano_params_left.view(-1, mano_params_left.shape[2])
+    right_params = mano_params_right.view(-1, mano_params_right.shape[2])
 
     # Process left hand
     _, left_hand_joints = mano_left(
