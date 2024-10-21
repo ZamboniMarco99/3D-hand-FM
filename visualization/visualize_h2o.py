@@ -10,7 +10,7 @@ from tqdm import tqdm
 from data.h2o_datamodule import H2ODataModule
 from models.utils import get_mano_joints
 from models.video_mano_regressor import VideoMANORegressor
-from vizualization.mano_renderer import ManoRenderer
+from visualization.mano_renderer import ManoRenderer
 
 
 @hydra.main(config_path="configs", config_name="visualize_h20.yaml", version_base="1.1")
@@ -123,7 +123,11 @@ def main(cfg: DictConfig) -> None:
                         keypoints_2d = mano_joints[f"{side}_keypoints_2d"]
                         color = "r" if side == "left" else "b"
                         ax2.scatter(
-                            keypoints_2d[:, 0], keypoints_2d[:, 1], c=color, s=5, label=f"{side.capitalize()} Hand"
+                            keypoints_2d[:, 0],
+                            keypoints_2d[:, 1],
+                            c=color,
+                            s=5,
+                            label=f"{side.capitalize()} Hand",
                         )
 
                 ax2.legend()
