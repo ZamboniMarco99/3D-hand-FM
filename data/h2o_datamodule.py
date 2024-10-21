@@ -98,6 +98,7 @@ class H2ODataset(Dataset):
         """
         self.video_readers = []
         self.mano_readers = []
+        self.camera_intrinsics = []
         self.num_clips = 0
         self.num_frames = num_frames
         self.cache = cache
@@ -121,6 +122,11 @@ class H2ODataset(Dataset):
                         ),
                     )
 
+                    intrinsics_path = Path(scene_path) / directory / camera / "cam_intrinsics.txt"
+                    [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
+                    intrinsics = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+                    self.camera_intrinsics.append(intrinsics)
+
                     mano_dir_path = Path(scene_path) / directory / camera / "hand_pose_mano"
                     self.mano_readers.append(
                         ManoReader(
@@ -130,7 +136,11 @@ class H2ODataset(Dataset):
                         ),
                     )
 
-                    self.clip_to_data[self.num_clips] = (self.video_readers[-1], self.mano_readers[-1])
+                    self.clip_to_data[self.num_clips] = (
+                        self.video_readers[-1],
+                        self.mano_readers[-1],
+                        self.camera_intrinsics[-1],
+                    )
                     self.num_clips += len(self.video_readers[-1]) // self.num_frames
 
     def __len__(self) -> int:
@@ -156,15 +166,15 @@ class H2ODataset(Dataset):
 
         """
         # Find the corresponding video and MANO readers
-        video_idx, video_reader, mano_reader = max(
-            (i, video, mano) for i, (video, mano) in self.clip_to_data.items() if i <= clip_idx
+        video_idx, video_reader, mano_reader, intrinsics = max(
+            (i, video, mano, intrinsics) for i, (video, mano, intrinsics) in self.clip_to_data.items() if i <= clip_idx
         )
 
         # Calculate the start frame of the clip within the video
         clip_idx_in_video = clip_idx - video_idx
         start_frame = self.num_frames * clip_idx_in_video
 
-        return video_reader, mano_reader, start_frame
+        return video_reader, mano_reader, intrinsics, start_frame
 
     @staticmethod
     @cache
@@ -232,7 +242,7 @@ class H2ODataset(Dataset):
             msg = f"Index {idx} out of range. Total clips: {len(self)}"
             raise IndexError(msg)
 
-        video_reader, mano_reader, start_frame = self._get_clip_data(idx)
+        video_reader, mano_reader, intrinsics, start_frame = self._get_clip_data(idx)
 
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
@@ -250,7 +260,7 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        return clip, mano_left, mano_right
+        return clip, mano_left, mano_right, torch.from_numpy(intrinsics)
 
 
 class H2ODataModule(pl.LightningDataModule):
