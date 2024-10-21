@@ -112,6 +112,10 @@ def main(cfg: DictConfig) -> None:
     datamodule.setup(stage="validate")
     val_dataloader = datamodule.val_dataloader()
 
+    # Create directories for this clip
+    save_dir = Path("visualization_results")
+    save_dir.mkdir(exist_ok=True)
+
     # Process validation data
     for batch_idx, batch in enumerate(tqdm(val_dataloader)):
         clip, mano_left, mano_right, intrinsics = batch
@@ -119,9 +123,6 @@ def main(cfg: DictConfig) -> None:
         clip = clip.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         intrinsics = intrinsics[0].cpu().numpy()
 
-        # Create directories for this clip
-        save_dir = Path("visualization_results")
-        save_dir.mkdir(exist_ok=True)
         pred_clip_dir = save_dir / "predictions" / f"clip_{batch_idx}"
         gt_clip_dir = save_dir / "ground_truth" / f"clip_{batch_idx}"
         combined_clip_dir = save_dir / "combined" / f"clip_{batch_idx}"
@@ -153,7 +154,7 @@ def main(cfg: DictConfig) -> None:
 
             # Visualize the results for predictions and ground truth
             # Visualize predicted and ground truth separately
-            for vis_type, mano_joints, save_dir in [
+            for vis_type, mano_joints, path in [
                 ("Predicted", frame_pred_mano_joints, pred_clip_dir),
                 ("Ground Truth", frame_gt_mano_joints, gt_clip_dir),
             ]:
@@ -186,7 +187,7 @@ def main(cfg: DictConfig) -> None:
                 plt.tight_layout()
 
                 # Save the figure in the appropriate directory
-                save_path = save_dir / f"frame_{frame_idx + 1}.png"
+                save_path = path / f"frame_{frame_idx + 1}.png"
                 fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
 
                 plt.close(fig)
