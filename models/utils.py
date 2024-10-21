@@ -12,10 +12,8 @@ from manopth.manolayer import ManoLayer
 def get_mano_joints(
     mano_params_left: torch.Tensor,
     mano_params_right: torch.Tensor,
-    mano_root: str,
-    ncomps: int = 45,
-    use_pca: bool = False,
-    flat_hand_mean: bool = True,
+    mano_left: ManoLayer,
+    mano_right: ManoLayer,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Execute the MANO model to generate hand joints.
 
@@ -24,10 +22,8 @@ def get_mano_joints(
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano_params_right (torch.Tensor): Tensor containing MANO parameters for the right hand.
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
-        mano_root (str): Path to the directory containing MANO model files.
-        ncomps (int, optional): Number of PCA components. Defaults to 45.
-        use_pca (bool, optional): Whether to use PCA for pose parameters. Defaults to False.
-        flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to True.
+        mano_left (ManoLayer): MANO model for the left hand.
+        mano_right (ManoLayer): MANO model for the right hand.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -36,25 +32,8 @@ def get_mano_joints(
 
     """
     # Get the device of mano_params
-    device = mano_params_left.device
     batch_size = mano_params_left.shape[0]
     num_frames = mano_params_left.shape[1]
-
-    # Initialize MANO layers for left and right hands
-    mano_left = ManoLayer(
-        mano_root=mano_root,
-        ncomps=ncomps,
-        use_pca=use_pca,
-        flat_hand_mean=flat_hand_mean,
-        side="left",
-    ).to(device)
-    mano_right = ManoLayer(
-        mano_root=mano_root,
-        ncomps=ncomps,
-        use_pca=use_pca,
-        flat_hand_mean=flat_hand_mean,
-        side="right",
-    ).to(device)
 
     # Push the time dimension in the batch dimension
     left_params = mano_params_left.view(-1, mano_params_left.shape[2])
