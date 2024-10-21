@@ -309,7 +309,7 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: Loss value.
 
         """
-        x, y_left, y_right = batch
+        x, y_left, y_right, _ = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
@@ -339,7 +339,7 @@ class VideoMANORegressor(pl.LightningModule):
             batch_idx (int): Index of the batch.
 
         """
-        x, y_left, y_right = batch
+        x, y_left, y_right, _ = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
