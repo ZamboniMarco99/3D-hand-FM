@@ -1,15 +1,16 @@
+import os
 from pathlib import Path
 
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from manopth.manolayer import ManoLayer
 from omegaconf import DictConfig
 from tqdm import tqdm
 
 from data.h2o_datamodule import H2ODataModule
 from models.video_mano_regressor import VideoMANORegressor
-from visualization.mano_renderer import ManoRenderer
 
 
 def get_mano_dict(mano_params_left: torch.Tensor, mano_params_right: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -41,6 +42,50 @@ def get_mano_dict(mano_params_left: torch.Tensor, mano_params_right: torch.Tenso
     }
 
 
+def project_points(hand_pose: dict[str, torch.Tensor], intrinsic_matrix: np.ndarray) -> dict[str, np.ndarray]:
+    """Takes hand pose and returns 2D keypoints."""
+    mano_root = os.environ.get("MANO_ROOT")
+    ncomps = 45
+    use_pca = False
+    flat_hand_mean = True
+    device = hand_pose["left_pose"].device
+    mano_left = ManoLayer(
+        mano_root=mano_root,
+        ncomps=ncomps,
+        use_pca=use_pca,
+        flat_hand_mean=flat_hand_mean,
+        side="left",
+    ).to(device)
+    mano_right = ManoLayer(
+        mano_root=mano_root,
+        ncomps=ncomps,
+        use_pca=use_pca,
+        flat_hand_mean=flat_hand_mean,
+        side="right",
+    ).to(device)
+    mano = {"left": mano_left, "right": mano_right}
+    for side in ["right", "left"]:
+        # skip if a side is missing
+        if f"{side}_pose" not in hand_pose:
+            continue
+
+        hand_verts, mano_keypoints_3d = mano[side](
+            torch.tensor(hand_pose[f"{side}_pose"], dtype=torch.float32),
+            torch.tensor(hand_pose[f"{side}_shape"], dtype=torch.float32),
+            torch.tensor(hand_pose[f"{side}_tran"], dtype=torch.float32),
+        )
+        # project 3D keypoints to 2D
+        keypoints_2d = []
+        keypoints_3d = []
+        for t in range(mano_keypoints_3d.shape[0]):
+            keypoints_3d.append(mano_keypoints_3d[t].detach().cpu().numpy())
+            keypoints_2d_temp = np.dot(intrinsic_matrix, keypoints_3d.T).T
+            keypoints_2d.append(keypoints_2d_temp[:, :2] / keypoints_2d_temp[:, 2:])
+        hand_pose[f"{side}_keypoints_2d"] = np.stack(keypoints_2d)
+        hand_pose[f"{side}_keypoints_3d"] = np.stack(keypoints_3d)
+    return hand_pose
+
+
 @hydra.main(config_path="configs", config_name="visualize_h20.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     # Initialize wandb
@@ -67,21 +112,16 @@ def main(cfg: DictConfig) -> None:
     datamodule.setup(stage="validate")
     val_dataloader = datamodule.val_dataloader()
 
-    # Initialize the ManoRenderer
-    renderer = ManoRenderer(image_size=(cfg.data.max_width, cfg.data.max_height))
-
-    # Create a directory to save the images
-    save_dir = Path("visualization_results")
-    save_dir.mkdir(exist_ok=True)
-
     # Process validation data
     for batch_idx, batch in enumerate(tqdm(val_dataloader)):
         clip, mano_left, mano_right, intrinsics = batch
         clip = clip.to(model.device)
         clip = clip.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
-        intrinsics = intrinsics[0]
+        intrinsics = intrinsics[0].cpu().numpy()
 
         # Create directories for this clip
+        save_dir = Path("visualization_results")
+        save_dir.mkdir(exist_ok=True)
         pred_clip_dir = save_dir / "predictions" / f"clip_{batch_idx}"
         gt_clip_dir = save_dir / "ground_truth" / f"clip_{batch_idx}"
         combined_clip_dir = save_dir / "combined" / f"clip_{batch_idx}"
@@ -93,27 +133,20 @@ def main(cfg: DictConfig) -> None:
         with torch.no_grad():
             y_pred_left, y_pred_right = model(clip)
 
-        y_pred_left = y_pred_left.to("cpu")
-        y_pred_right = y_pred_right.to("cpu")
-
         # Get the first (and only) item in the batch
         sample_clip = clip[0].permute(1, 0, 2, 3)
 
         width, height = cfg.data.max_width, cfg.data.max_height
 
-        # Set camera intrinsics for the renderer
-        renderer.set_camera_intrinsics(intrinsics, width, height)
+        pred_mano_dict = get_mano_dict(y_pred_left[0, :], y_pred_right[0, :])
+        gt_mano_dict = get_mano_dict(mano_left[0, :], mano_right[0, :])
+
+        # Project 3D keypoints to 2D for predictions and ground truth
+        frame_pred_mano_joints = project_points(pred_mano_dict, intrinsics)
+        frame_gt_mano_joints = project_points(gt_mano_dict, intrinsics)
 
         # Visualize the results for each frame in the clip
         for frame_idx in range(sample_clip.shape[1]):  # Iterate over frames
-            # Get the predicted and ground truth MANO joints for the current frame
-            pred_mano_dict = get_mano_dict(y_pred_left[:, frame_idx], y_pred_right[:, frame_idx])
-            gt_mano_dict = get_mano_dict(mano_left[:, frame_idx], mano_right[:, frame_idx])
-
-            # Project 3D keypoints to 2D for predictions and ground truth
-            frame_pred_mano_joints = renderer.project_points(pred_mano_dict, intrinsics)
-            frame_gt_mano_joints = renderer.project_points(gt_mano_dict, intrinsics)
-
             frame = sample_clip[frame_idx].permute(1, 2, 0).cpu().numpy()
             frame = (frame - frame.min()) / (frame.max() - frame.min())
             frame = (frame * 255).astype(np.uint8)
@@ -132,7 +165,7 @@ def main(cfg: DictConfig) -> None:
 
                 for side in ["left", "right"]:
                     if f"{side}_keypoints_2d" in mano_joints:
-                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"]
+                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
                         color = "red" if side == "left" else "blue"
                         ax.scatter(
                             keypoints_2d[:, 0],
@@ -171,7 +204,7 @@ def main(cfg: DictConfig) -> None:
             ]:
                 for side, color in zip(["left", "right"], colors, strict=False):
                     if f"{side}_keypoints_2d" in mano_joints:
-                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"]
+                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
                         ax.scatter(
                             keypoints_2d[:, 0],
                             keypoints_2d[:, 1],
