@@ -79,7 +79,7 @@ def project_points(hand_pose: dict[str, torch.Tensor], intrinsic_matrix: np.ndar
         keypoints_3d = []
         for t in range(mano_keypoints_3d.shape[0]):
             keypoints_3d.append(mano_keypoints_3d[t].detach().cpu().numpy())
-            keypoints_2d_temp = np.dot(intrinsic_matrix, keypoints_3d.T).T
+            keypoints_2d_temp = np.dot(intrinsic_matrix, keypoints_3d[-1].T).T
             keypoints_2d.append(keypoints_2d_temp[:, :2] / keypoints_2d_temp[:, 2:])
         hand_pose[f"{side}_keypoints_2d"] = np.stack(keypoints_2d)
         hand_pose[f"{side}_keypoints_3d"] = np.stack(keypoints_3d)
@@ -147,7 +147,7 @@ def main(cfg: DictConfig) -> None:
         frame_gt_mano_joints = project_points(gt_mano_dict, intrinsics)
 
         # Visualize the results for each frame in the clip
-        for frame_idx in range(sample_clip.shape[1]):  # Iterate over frames
+        for frame_idx in range(sample_clip.shape[0]):  # Iterate over frames
             frame = sample_clip[frame_idx].permute(1, 2, 0).cpu().numpy()
             frame = (frame - frame.min()) / (frame.max() - frame.min())
             frame = (frame * 255).astype(np.uint8)
