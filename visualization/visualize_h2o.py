@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import hydra
@@ -48,7 +49,8 @@ def main(cfg: DictConfig) -> None:
 
     # Process validation data
     for batch_idx, batch in enumerate(tqdm(val_dataloader)):
-        clip, mano_left, mano_right = batch
+        clip, mano_left, mano_right, intrinsics = batch
+        clip = clip.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
         # Create directories for this clip
         pred_clip_dir = save_dir / "predictions" / f"clip_{batch_idx}"
@@ -58,13 +60,19 @@ def main(cfg: DictConfig) -> None:
 
         # Get model predictions
         with torch.no_grad():
-            left_mano, right_mano = model(clip)
+            y_pred_left, y_pred_right = model(clip)
 
         # Get MANO joints for predictions and ground truth
-        pred_left_joints = get_mano_joints(left_mano)
-        pred_right_joints = get_mano_joints(right_mano)
-        gt_left_joints = get_mano_joints(mano_left)
-        gt_right_joints = get_mano_joints(mano_right)
+        pred_left_hand_joints, pred_right_hand_joints = get_mano_joints(
+            y_pred_left,
+            y_pred_right,
+            mano_root=os.environ.get("MANO_ROOT"),
+        )
+        gt_left_hand_joints, gt_right_hand_joints = get_mano_joints(
+            mano_left,
+            mano_right,
+            mano_root=os.environ.get("MANO_ROOT"),
+        )
 
         # Get the first (and only) item in the batch
         sample_clip = clip[0]
