@@ -124,7 +124,15 @@ class H2ODataset(Dataset):
 
                     intrinsics_path = Path(scene_path) / directory / camera / "cam_intrinsics.txt"
                     [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
-                    intrinsics = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+                    scale_x = max_width / w if max_width else 1
+                    scale_y = max_height / h if max_height else 1
+                    intrinsics = np.array(
+                        [
+                            [fx * scale_x, 0, cx * scale_x],
+                            [0, fy * scale_y, cy * scale_y],
+                            [0, 0, 1],
+                        ]
+                    )
                     self.camera_intrinsics.append(intrinsics)
 
                     mano_dir_path = Path(scene_path) / directory / camera / "hand_pose_mano"

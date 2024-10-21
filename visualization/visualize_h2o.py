@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import hydra
@@ -9,9 +8,37 @@ from omegaconf import DictConfig
 from tqdm import tqdm
 
 from data.h2o_datamodule import H2ODataModule
-from models.utils import get_mano_joints
 from models.video_mano_regressor import VideoMANORegressor
 from visualization.mano_renderer import ManoRenderer
+
+
+def get_mano_dict(mano_params_left: torch.Tensor, mano_params_right: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Convert MANO parameters for both hands to a dictionary format.
+
+    Args:
+        mano_params_left (torch.Tensor): Tensor containing MANO parameters for the left hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
+        mano_params_right (torch.Tensor): Tensor containing MANO parameters for the right hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
+
+    Returns:
+        dict: A dictionary containing MANO parameters for both hands with keys:
+            - "left_pose": Left hand pose parameters (45-dimensional)
+            - "left_shape": Left hand shape parameters (10-dimensional)
+            - "left_tran": Left hand translation parameters (3-dimensional)
+            - "right_pose": Right hand pose parameters (45-dimensional)
+            - "right_shape": Right hand shape parameters (10-dimensional)
+            - "right_tran": Right hand translation parameters (3-dimensional)
+
+    """
+    return {
+        "left_tran": mano_params_left[:, :3],
+        "left_pose": mano_params_left[:, 3:51],
+        "left_shape": mano_params_left[:, 51:],
+        "right_tran": mano_params_right[:, :3],
+        "right_pose": mano_params_right[:, 3:51],
+        "right_shape": mano_params_right[:, 51:],
+    }
 
 
 @hydra.main(config_path="configs", config_name="visualize_h20.yaml", version_base="1.1")
@@ -51,6 +78,7 @@ def main(cfg: DictConfig) -> None:
     for batch_idx, batch in enumerate(tqdm(val_dataloader)):
         clip, mano_left, mano_right, intrinsics = batch
         clip = clip.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        intrinsics = intrinsics[0]
 
         # Create directories for this clip
         pred_clip_dir = save_dir / "predictions" / f"clip_{batch_idx}"
@@ -62,54 +90,30 @@ def main(cfg: DictConfig) -> None:
         with torch.no_grad():
             y_pred_left, y_pred_right = model(clip)
 
-        # Get MANO joints for predictions and ground truth
-        pred_left_hand_joints, pred_right_hand_joints = get_mano_joints(
-            y_pred_left,
-            y_pred_right,
-            mano_root=os.environ.get("MANO_ROOT"),
-        )
-        gt_left_hand_joints, gt_right_hand_joints = get_mano_joints(
-            mano_left,
-            mano_right,
-            mano_root=os.environ.get("MANO_ROOT"),
-        )
+        y_pred_left = y_pred_left.to("cpu")
+        y_pred_right = y_pred_right.to("cpu")
 
         # Get the first (and only) item in the batch
         sample_clip = clip[0]
-        sample_pred_left_joints = pred_left_joints[0].cpu().numpy()
-        sample_pred_right_joints = pred_right_joints[0].cpu().numpy()
-        sample_gt_left_joints = gt_left_joints[0].cpu().numpy()
-        sample_gt_right_joints = gt_right_joints[0].cpu().numpy()
 
-        # Load camera intrinsics (assuming a default intrinsic matrix for visualization)
-        # In a real scenario, you would need to get this information from your dataset
-        intrinsic_matrix = np.array([[1000, 0, cfg.data.max_width / 2], [0, 1000, cfg.data.max_height / 2], [0, 0, 1]])
         width, height = cfg.data.max_width, cfg.data.max_height
 
         # Set camera intrinsics for the renderer
-        renderer.set_camera_intrinsics(intrinsic_matrix, width, height)
+        renderer.set_camera_intrinsics(intrinsics, width, height)
 
         # Visualize the results for each frame in the clip
         for frame_idx in range(sample_clip.shape[1]):  # Iterate over frames
             # Get the predicted and ground truth MANO joints for the current frame
-            frame_pred_left_joints = sample_pred_left_joints[frame_idx]
-            frame_pred_right_joints = sample_pred_right_joints[frame_idx]
-            frame_gt_left_joints = sample_gt_left_joints[frame_idx]
-            frame_gt_right_joints = sample_gt_right_joints[frame_idx]
-
-            # Combine left and right MANO joints for predictions and ground truth
-            frame_pred_mano_joints = {
-                "left_keypoints_3d": frame_pred_left_joints,
-                "right_keypoints_3d": frame_pred_right_joints,
-            }
-            frame_gt_mano_joints = {
-                "left_keypoints_3d": frame_gt_left_joints,
-                "right_keypoints_3d": frame_gt_right_joints,
-            }
+            pred_mano_dict = get_mano_dict(y_pred_left[:, frame_idx], y_pred_right[:, frame_idx])
+            gt_mano_dict = get_mano_dict(mano_left[:, frame_idx], mano_right[:, frame_idx])
 
             # Project 3D keypoints to 2D for predictions and ground truth
-            frame_pred_mano_joints = renderer.project_points(frame_pred_mano_joints, intrinsic_matrix)
-            frame_gt_mano_joints = renderer.project_points(frame_gt_mano_joints, intrinsic_matrix)
+            frame_pred_mano_joints = renderer.project_points(pred_mano_dict, intrinsics)
+            frame_gt_mano_joints = renderer.project_points(gt_mano_dict, intrinsics)
+
+            frame = sample_clip[frame_idx].permute(1, 2, 0).cpu().numpy()
+            frame = (frame - frame.min()) / (frame.max() - frame.min())
+            frame = (frame * 255).astype(np.uint8)
 
             # Visualize the results for predictions and ground truth
             for vis_type, mano_joints, save_dir in [
@@ -119,7 +123,7 @@ def main(cfg: DictConfig) -> None:
                 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
 
                 # Original image
-                ax1.imshow(sample_clip[frame_idx].permute(1, 2, 0).cpu().numpy())
+                ax1.imshow(frame)
                 ax1.set_title(f"Original Image (Frame {frame_idx + 1})")
 
                 # Rendered image with keypoints
