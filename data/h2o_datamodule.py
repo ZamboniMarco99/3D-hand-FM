@@ -124,14 +124,20 @@ class H2ODataset(Dataset):
 
                     intrinsics_path = Path(scene_path) / directory / camera / "cam_intrinsics.txt"
                     [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
-                    scale_x = max_width / w if max_width else 1
-                    scale_y = max_height / h if max_height else 1
+                    # Calculate the scale factor while maintaining aspect ratio
+                    scale = min(max_width / w, max_height / h) if max_width and max_height else 1
+                    new_w, new_h = int(w * scale), int(h * scale)
+
+                    # Calculate padding for centering
+                    pad_x = (max_width - new_w) // 2 if max_width else 0
+                    pad_y = (max_height - new_h) // 2 if max_height else 0
+
                     intrinsics = np.array(
                         [
-                            [fx * scale_x, 0, cx * scale_x],
-                            [0, fy * scale_y, cy * scale_y],
+                            [fx * scale, 0, (cx * scale) + pad_x],
+                            [0, fy * scale, (cy * scale) + pad_y],
                             [0, 0, 1],
-                        ]
+                        ],
                     )
                     self.camera_intrinsics.append(intrinsics)
 

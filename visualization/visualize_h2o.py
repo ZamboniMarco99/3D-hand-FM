@@ -77,14 +77,17 @@ def main(cfg: DictConfig) -> None:
     # Process validation data
     for batch_idx, batch in enumerate(tqdm(val_dataloader)):
         clip, mano_left, mano_right, intrinsics = batch
+        clip = clip.to(model.device)
         clip = clip.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
         intrinsics = intrinsics[0]
 
         # Create directories for this clip
         pred_clip_dir = save_dir / "predictions" / f"clip_{batch_idx}"
         gt_clip_dir = save_dir / "ground_truth" / f"clip_{batch_idx}"
+        combined_clip_dir = save_dir / "combined" / f"clip_{batch_idx}"
         pred_clip_dir.mkdir(parents=True, exist_ok=True)
         gt_clip_dir.mkdir(parents=True, exist_ok=True)
+        combined_clip_dir.mkdir(parents=True, exist_ok=True)
 
         # Get model predictions
         with torch.no_grad():
@@ -94,7 +97,7 @@ def main(cfg: DictConfig) -> None:
         y_pred_right = y_pred_right.to("cpu")
 
         # Get the first (and only) item in the batch
-        sample_clip = clip[0]
+        sample_clip = clip[0].permute(1, 0, 2, 3)
 
         width, height = cfg.data.max_width, cfg.data.max_height
 
@@ -116,43 +119,83 @@ def main(cfg: DictConfig) -> None:
             frame = (frame * 255).astype(np.uint8)
 
             # Visualize the results for predictions and ground truth
+            # Visualize predicted and ground truth separately
             for vis_type, mano_joints, save_dir in [
                 ("Predicted", frame_pred_mano_joints, pred_clip_dir),
                 ("Ground Truth", frame_gt_mano_joints, gt_clip_dir),
             ]:
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
+                fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
 
-                # Original image
-                ax1.imshow(frame)
-                ax1.set_title(f"Original Image (Frame {frame_idx + 1})")
-
-                # Rendered image with keypoints
-                ax2.imshow(np.ones((height, width, 3)))  # White background
-                ax2.set_title(f"{vis_type} Projected Hand Joints (Frame {frame_idx + 1})")
+                # Display the frame
+                ax.imshow(frame)
+                ax.set_title(f"{vis_type} Hand Joints (Frame {frame_idx + 1})", fontsize=16)
 
                 for side in ["left", "right"]:
                     if f"{side}_keypoints_2d" in mano_joints:
                         keypoints_2d = mano_joints[f"{side}_keypoints_2d"]
-                        color = "r" if side == "left" else "b"
-                        ax2.scatter(
+                        color = "red" if side == "left" else "blue"
+                        ax.scatter(
                             keypoints_2d[:, 0],
                             keypoints_2d[:, 1],
                             c=color,
-                            s=5,
+                            s=50,
+                            alpha=0.7,
+                            edgecolors="white",
+                            linewidths=1,
                             label=f"{side.capitalize()} Hand",
                         )
 
-                ax2.legend()
-                ax2.set_xlim(0, width)
-                ax2.set_ylim(height, 0)  # Invert y-axis to match image coordinates
+                ax.legend(fontsize=12, loc="upper right")
+                ax.set_xlim(0, width)
+                ax.set_ylim(height, 0)  # Invert y-axis to match image coordinates
+                ax.axis("off")  # Remove axes for cleaner visualization
 
                 plt.tight_layout()
 
                 # Save the figure in the appropriate directory
                 save_path = save_dir / f"frame_{frame_idx + 1}.png"
-                fig.savefig(save_path)
+                fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
 
                 plt.close(fig)
+
+            # Visualize predicted and ground truth in the same image
+            fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
+
+            # Display the frame
+            ax.imshow(frame)
+            ax.set_title(f"Predicted vs Ground Truth Hand Joints (Frame {frame_idx + 1})", fontsize=16)
+
+            for vis_type, mano_joints, marker, colors in [
+                ("Predicted", frame_pred_mano_joints, "o", ["green", "orange"]),
+                ("Ground Truth", frame_gt_mano_joints, "s", ["purple", "cyan"]),
+            ]:
+                for side, color in zip(["left", "right"], colors, strict=False):
+                    if f"{side}_keypoints_2d" in mano_joints:
+                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"]
+                        ax.scatter(
+                            keypoints_2d[:, 0],
+                            keypoints_2d[:, 1],
+                            c=color,
+                            s=50,
+                            alpha=0.7,
+                            edgecolors="white",
+                            linewidths=1,
+                            marker=marker,
+                            label=f"{vis_type} {side.capitalize()} Hand",
+                        )
+
+            ax.legend(fontsize=12, loc="upper right")
+            ax.set_xlim(0, width)
+            ax.set_ylim(height, 0)  # Invert y-axis to match image coordinates
+            ax.axis("off")  # Remove axes for cleaner visualization
+
+            plt.tight_layout()
+
+            # Save the combined figure
+            save_path = combined_clip_dir / f"frame_{frame_idx + 1}.png"
+            fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
+
+            plt.close(fig)
 
 
 if __name__ == "__main__":

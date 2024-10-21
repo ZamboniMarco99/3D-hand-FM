@@ -7,9 +7,7 @@ import numpy as np
 import open3d as o3d
 import torch
 from manopth.manolayer import ManoLayer
-
-# from open3d import Image
-from open3d.cpu.pybind.geometry import Image as ImageO3d
+from open3d.geometry import Image as ImageO3d
 
 MANO_MODEL_PATH = os.environ.get("MANO_ROOT")
 
