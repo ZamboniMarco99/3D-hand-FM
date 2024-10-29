@@ -268,6 +268,7 @@ class VideoMANORegressor(pl.LightningModule):
             flat_hand_mean=flat_hand_mean,
             side="left",
         )
+        self.mano_left.requires_grad_(requires_grad=False)
 
         self.mano_right = ManoLayer(
             mano_root=mano_root,
@@ -276,6 +277,7 @@ class VideoMANORegressor(pl.LightningModule):
             flat_hand_mean=flat_hand_mean,
             side="right",
         )
+        self.mano_right.requires_grad_(requires_grad=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
