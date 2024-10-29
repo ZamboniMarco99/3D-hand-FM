@@ -8,7 +8,7 @@ train: False
 
 log_level: INFO
 
-checkpoint: "epoch=54-step=29260.ckpt"
+checkpoint: "/cluster/project/cvg/students/mzamboni/3D-hand-FM/ckpts/epoch=54-step=29260.ckpt"
 
 model:
 

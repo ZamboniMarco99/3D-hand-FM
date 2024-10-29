@@ -12,10 +12,8 @@ from manopth.manolayer import ManoLayer
 def get_mano_joints(
     mano_params_left: torch.Tensor,
     mano_params_right: torch.Tensor,
-    mano_root: str,
-    ncomps: int = 45,
-    use_pca: bool = False,
-    flat_hand_mean: bool = True,
+    mano_left: ManoLayer,
+    mano_right: ManoLayer,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Execute the MANO model to generate hand joints.
 
@@ -24,10 +22,8 @@ def get_mano_joints(
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano_params_right (torch.Tensor): Tensor containing MANO parameters for the right hand.
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
-        mano_root (str): Path to the directory containing MANO model files.
-        ncomps (int, optional): Number of PCA components. Defaults to 45.
-        use_pca (bool, optional): Whether to use PCA for pose parameters. Defaults to False.
-        flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to True.
+        mano_left (ManoLayer): MANO model for the left hand.
+        mano_right (ManoLayer): MANO model for the right hand.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -36,25 +32,8 @@ def get_mano_joints(
 
     """
     # Get the device of mano_params
-    device = mano_params_left.device
     batch_size = mano_params_left.shape[0]
     num_frames = mano_params_left.shape[1]
-
-    # Initialize MANO layers for left and right hands
-    mano_left = ManoLayer(
-        mano_root=mano_root,
-        ncomps=ncomps,
-        use_pca=use_pca,
-        flat_hand_mean=flat_hand_mean,
-        side="left",
-    ).to(device)
-    mano_right = ManoLayer(
-        mano_root=mano_root,
-        ncomps=ncomps,
-        use_pca=use_pca,
-        flat_hand_mean=flat_hand_mean,
-        side="right",
-    ).to(device)
 
     # Push the time dimension in the batch dimension
     left_params = mano_params_left.view(-1, mano_params_left.shape[2])
@@ -79,3 +58,47 @@ def get_mano_joints(
     right_hand_joints = right_hand_joints.view(batch_size, num_frames, -1, 3)
 
     return left_hand_joints, right_hand_joints
+
+
+def project_joints_to_2d(
+    joints_3d: torch.Tensor,
+    intrinsic_matrix: torch.Tensor,
+) -> torch.Tensor:
+    """Project 3D hand joints to 2D image coordinates.
+
+    Args:
+        joints_3d (torch.Tensor): 3D joint coordinates with shape (batch_size, num_frames, num_joints, 3)
+        intrinsic_matrix (torch.Tensor): Camera intrinsic matrix with shape (batch_size, 3, 3)
+
+    Returns:
+        torch.Tensor: 2D joint coordinates with shape (batch_size, num_frames, num_joints, 2)
+
+    """
+    batch_size, num_frames, num_joints, _ = joints_3d.shape
+
+    # Project 3D keypoints to 2D for each batch
+    keypoints_2d = []
+    for b in range(batch_size):
+        batch_keypoints = []
+        # Get intrinsic matrix for this batch
+        batch_intrinsics = intrinsic_matrix[b]
+
+        # Process each frame in the batch
+        for f in range(num_frames):
+            # Get joints for this frame
+            joints_f = joints_3d[b, f]  # Shape: (num_joints, 3)
+
+            # Transpose joints to match matrix multiplication dimensions
+            joints_f = joints_f.transpose(0, 1)  # Shape: (3, num_joints)
+
+            # Matrix multiply with intrinsic matrix
+            keypoints_2d_temp = torch.matmul(batch_intrinsics, joints_f).transpose(0, 1)
+
+            # Divide by z coordinates for perspective projection
+            batch_keypoints.append(keypoints_2d_temp[..., :2] / keypoints_2d_temp[..., 2:])
+
+        # Stack frames for this batch
+        keypoints_2d.append(torch.stack(batch_keypoints))
+
+    # Stack all batches
+    return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
