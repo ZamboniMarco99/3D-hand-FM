@@ -1,3 +1,21 @@
+"""Visualization tools for H2O dataset and model predictions.
+
+This module provides functionality to visualize hand poses from the H2O dataset
+and compare them with model predictions. It includes utilities for:
+- Converting MANO parameters between different formats
+- Projecting 3D hand joints to 2D image coordinates
+- Visualizing hand poses and keypoints
+- Comparing ground truth and predicted hand poses
+
+Example usage:
+    python visualize_h2o.py data=h20_pretrained checkpoint=/path/to/model.ckpt
+
+The visualization can be configured through a hydra config file that specifies:
+- Dataset parameters
+- Model checkpoint path
+- Visualization options
+"""
+
 import os
 from pathlib import Path
 
@@ -86,8 +104,149 @@ def project_points(hand_pose: dict[str, torch.Tensor], intrinsic_matrix: np.ndar
     return hand_pose
 
 
+def visualize_hand_joints(
+    frame: np.ndarray,
+    mano_joints: dict,
+    width: int,
+    height: int,
+    title: str,
+    frame_idx: int,
+) -> plt.Figure:
+    """Create a visualization of hand joints on a frame.
+
+    Args:
+        frame: The video frame as a numpy array
+        mano_joints: Dictionary containing keypoints data
+        width: Frame width
+        height: Frame height
+        title: Title for the plot
+        frame_idx: Index of the current frame
+
+    Returns:
+        matplotlib Figure object
+
+    """
+    fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
+
+    # Display the frame
+    ax.imshow(frame)
+    ax.set_title(f"{title} (Frame {frame_idx + 1})", fontsize=16)
+
+    for side in ["left", "right"]:
+        if f"{side}_keypoints_2d" in mano_joints:
+            keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
+            color = "red" if side == "left" else "blue"
+            ax.scatter(
+                keypoints_2d[:, 0],
+                keypoints_2d[:, 1],
+                c=color,
+                s=50,
+                alpha=0.7,
+                edgecolors="white",
+                linewidths=1,
+                label=f"{side.capitalize()} Hand",
+            )
+
+    ax.legend(fontsize=12, loc="upper right")
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)  # Invert y-axis to match image coordinates
+    ax.axis("off")  # Remove axes for cleaner visualization
+    plt.tight_layout()
+
+    return fig
+
+
+def visualize_comparison(
+    frame: np.ndarray,
+    pred_mano_joints: dict,
+    gt_mano_joints: dict,
+    width: int,
+    height: int,
+    frame_idx: int,
+) -> plt.Figure:
+    """Create a comparison visualization of predicted vs ground truth joints.
+
+    Args:
+        frame: The video frame as a numpy array
+        pred_mano_joints: Dictionary containing predicted keypoints
+        gt_mano_joints: Dictionary containing ground truth keypoints
+        width: Frame width
+        height: Frame height
+        frame_idx: Index of the current frame
+
+    Returns:
+        matplotlib Figure object
+
+    """
+    fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
+
+    # Display the frame
+    ax.imshow(frame)
+    ax.set_title(f"Predicted vs Ground Truth Hand Joints (Frame {frame_idx + 1})", fontsize=16)
+
+    for vis_type, mano_joints, marker, colors in [
+        ("Predicted", pred_mano_joints, "o", ["green", "orange"]),
+        ("Ground Truth", gt_mano_joints, "s", ["purple", "cyan"]),
+    ]:
+        for side, color in zip(["left", "right"], colors, strict=False):
+            if f"{side}_keypoints_2d" in mano_joints:
+                keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
+                ax.scatter(
+                    keypoints_2d[:, 0],
+                    keypoints_2d[:, 1],
+                    c=color,
+                    s=50,
+                    alpha=0.7,
+                    edgecolors="white",
+                    linewidths=1,
+                    marker=marker,
+                    label=f"{vis_type} {side.capitalize()} Hand",
+                )
+
+    ax.legend(fontsize=12, loc="upper right")
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.axis("off")
+    plt.tight_layout()
+
+    return fig
+
+
+def save_visualization(fig: plt.Figure, save_path: Path) -> None:
+    """Save a matplotlib figure to disk.
+
+    Args:
+        fig: matplotlib Figure to save
+        save_path: Path where the figure should be saved
+
+    """
+    fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
+    plt.close(fig)
+
+
 @hydra.main(config_path="configs", config_name="visualize_h20.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
+    """Visualize predictions of the H2O model.
+
+    This script loads a trained VideoMANORegressor model and visualizes its predictions
+    on the H2O validation dataset. For each video clip, it:
+    1. Generates predictions using the model
+    2. Projects the predicted 3D keypoints to 2D using camera intrinsics
+    3. Saves visualization results showing:
+        - Original frames with predicted hand keypoints
+        - Original frames with ground truth hand keypoints
+        - Side-by-side comparison of predictions and ground truth
+
+    Args:
+        cfg (DictConfig): Hydra configuration object containing:
+            - checkpoint: Path to model checkpoint
+            - data: Dataset configuration including paths and parameters
+            - model: Model configuration
+
+    Raises:
+        FileNotFoundError: If the specified checkpoint file is not found
+
+    """
     # Initialize wandb
     # Load checkpoint from the ckpts directory
     checkpoint_path = Path(cfg.checkpoint)
@@ -147,89 +306,36 @@ def main(cfg: DictConfig) -> None:
         frame_gt_mano_joints = project_points(gt_mano_dict, intrinsics)
 
         # Visualize the results for each frame in the clip
-        for frame_idx in range(sample_clip.shape[0]):  # Iterate over frames
+        for frame_idx in range(sample_clip.shape[0]):
             frame = sample_clip[frame_idx].permute(1, 2, 0).cpu().numpy()
             frame = (frame - frame.min()) / (frame.max() - frame.min())
             frame = (frame * 255).astype(np.uint8)
 
-            # Visualize the results for predictions and ground truth
             # Visualize predicted and ground truth separately
             for vis_type, mano_joints, path in [
-                ("Predicted", frame_pred_mano_joints, pred_clip_dir),
-                ("Ground Truth", frame_gt_mano_joints, gt_clip_dir),
+                ("Predicted Hand Joints", frame_pred_mano_joints, pred_clip_dir),
+                ("Ground Truth Hand Joints", frame_gt_mano_joints, gt_clip_dir),
             ]:
-                fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
+                fig = visualize_hand_joints(
+                    frame=frame,
+                    mano_joints=mano_joints,
+                    width=width,
+                    height=height,
+                    title=vis_type,
+                    frame_idx=frame_idx,
+                )
+                save_visualization(fig, path / f"frame_{frame_idx + 1}.png")
 
-                # Display the frame
-                ax.imshow(frame)
-                ax.set_title(f"{vis_type} Hand Joints (Frame {frame_idx + 1})", fontsize=16)
-
-                for side in ["left", "right"]:
-                    if f"{side}_keypoints_2d" in mano_joints:
-                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
-                        color = "red" if side == "left" else "blue"
-                        ax.scatter(
-                            keypoints_2d[:, 0],
-                            keypoints_2d[:, 1],
-                            c=color,
-                            s=50,
-                            alpha=0.7,
-                            edgecolors="white",
-                            linewidths=1,
-                            label=f"{side.capitalize()} Hand",
-                        )
-
-                ax.legend(fontsize=12, loc="upper right")
-                ax.set_xlim(0, width)
-                ax.set_ylim(height, 0)  # Invert y-axis to match image coordinates
-                ax.axis("off")  # Remove axes for cleaner visualization
-
-                plt.tight_layout()
-
-                # Save the figure in the appropriate directory
-                save_path = path / f"frame_{frame_idx + 1}.png"
-                fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
-
-                plt.close(fig)
-
-            # Visualize predicted and ground truth in the same image
-            fig, ax = plt.subplots(figsize=(12, 12), dpi=150)
-
-            # Display the frame
-            ax.imshow(frame)
-            ax.set_title(f"Predicted vs Ground Truth Hand Joints (Frame {frame_idx + 1})", fontsize=16)
-
-            for vis_type, mano_joints, marker, colors in [
-                ("Predicted", frame_pred_mano_joints, "o", ["green", "orange"]),
-                ("Ground Truth", frame_gt_mano_joints, "s", ["purple", "cyan"]),
-            ]:
-                for side, color in zip(["left", "right"], colors, strict=False):
-                    if f"{side}_keypoints_2d" in mano_joints:
-                        keypoints_2d = mano_joints[f"{side}_keypoints_2d"][frame_idx]
-                        ax.scatter(
-                            keypoints_2d[:, 0],
-                            keypoints_2d[:, 1],
-                            c=color,
-                            s=50,
-                            alpha=0.7,
-                            edgecolors="white",
-                            linewidths=1,
-                            marker=marker,
-                            label=f"{vis_type} {side.capitalize()} Hand",
-                        )
-
-            ax.legend(fontsize=12, loc="upper right")
-            ax.set_xlim(0, width)
-            ax.set_ylim(height, 0)  # Invert y-axis to match image coordinates
-            ax.axis("off")  # Remove axes for cleaner visualization
-
-            plt.tight_layout()
-
-            # Save the combined figure
-            save_path = combined_clip_dir / f"frame_{frame_idx + 1}.png"
-            fig.savefig(save_path, bbox_inches="tight", pad_inches=0.1)
-
-            plt.close(fig)
+            # Visualize comparison
+            fig = visualize_comparison(
+                frame=frame,
+                pred_mano_joints=frame_pred_mano_joints,
+                gt_mano_joints=frame_gt_mano_joints,
+                width=width,
+                height=height,
+                frame_idx=frame_idx,
+            )
+            save_visualization(fig, combined_clip_dir / f"frame_{frame_idx + 1}.png")
 
 
 if __name__ == "__main__":
