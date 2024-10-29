@@ -90,7 +90,7 @@ def project_points(hand_pose: dict[str, torch.Tensor], intrinsic_matrix: np.ndar
 def main(cfg: DictConfig) -> None:
     # Initialize wandb
     # Load checkpoint from the ckpts directory
-    checkpoint_path = Path("ckpts") / cfg.checkpoint
+    checkpoint_path = Path(cfg.checkpoint)
     if not checkpoint_path.exists():
         msg = f"Checkpoint file not found: {checkpoint_path}"
         raise FileNotFoundError(msg)
