@@ -20,7 +20,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints
+from models.utils import get_mano_joints, project_joints_to_2d
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -316,6 +316,7 @@ class VideoMANORegressor(pl.LightningModule):
         pred_right_hand_joints: torch.Tensor,
         true_left_hand_joints: torch.Tensor,
         true_right_hand_joints: torch.Tensor,
+        intrinsic_matrix: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the loss for the model.
 
@@ -335,24 +336,29 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints (torch.Tensor): Predicted 3D keypoints for right hand.
             true_left_hand_joints (torch.Tensor): Ground truth 3D keypoints for left hand.
             true_right_hand_joints (torch.Tensor): Ground truth 3D keypoints for right hand.
+            intrinsic_matrix (torch.Tensor): Camera intrinsic matrix.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: The computed losses for left and right hands.
 
         """
-        # TODO(Marco): Add 2D loss
-
+        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
+        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
         # Left hand loss
         pose_loss_left = F.mse_loss(y_pred_left[..., :45], y_true_left[..., :45])
         shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
         keypoints_loss_left = F.l1_loss(pred_left_hand_joints, true_left_hand_joints)
-        left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left
+        keypoints_2d_loss_left = F.l1_loss(pred_keypoints_2d_left, true_keypoints_2d_left)
+        left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left + keypoints_2d_loss_left
 
         # Right hand loss
         pose_loss_right = F.mse_loss(y_pred_right[..., :45], y_true_right[..., :45])
         shape_loss_right = F.mse_loss(y_pred_right[..., -10:], y_true_right[..., -10:])
         keypoints_loss_right = F.l1_loss(pred_right_hand_joints, true_right_hand_joints)
-        right_hand_loss = pose_loss_right + shape_loss_right + keypoints_loss_right
+        keypoints_2d_loss_right = F.l1_loss(pred_keypoints_2d_right, true_keypoints_2d_right)
+        right_hand_loss = pose_loss_right + shape_loss_right + keypoints_loss_right + keypoints_2d_loss_right
 
         return left_hand_loss, right_hand_loss
 
