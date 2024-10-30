@@ -6,9 +6,9 @@ that are helpful in processing data, executing MANO models, and other related ta
 """
 
 import torch
+import torch.nn.functional as func
 from manopth.manolayer import ManoLayer
-from pytorch3d.transforms import matrix_to_axis_angle, axis_angle_to_matrix
-import torch.nn.functional as F
+from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
 
 def get_mano_joints(
@@ -107,13 +107,17 @@ def project_joints_to_2d(
 
 
 def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
-    """Convert a 6D representation to an axis-angle representation
-    using a Gram-Schmidt-like process.
+    """Convert a 6D representation to an axis-angle representation.
+
+    We use a Gram-Schmidt-like process.
+
     Input: (..., n*6) tensor
-    Output: (..., n*3) tensor
+    Output: (..., n*3) tensor.
     """
     dims = x.shape
-    assert x.shape[-1] % 6 == 0, "Last dimension must be a multiple of 6."
+    if x.shape[-1] % 6 != 0:
+        msg = f"Last dimension must be a multiple of 6. Got {x.shape[-1]}."
+        raise ValueError(msg)
 
     # Reshape (..., n*6) to (-1, 6)
     x = x.reshape(-1, 6)
@@ -121,10 +125,10 @@ def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
     # Convert 6D to rotation matrix using Gram-Schmidt-like process
     b1 = x[..., :3]
     b2 = x[..., 3:]
-    b1 = F.normalize(b1, dim=-1)
+    b1 = func.normalize(b1, dim=-1)
     dot_b1_b2 = torch.sum(b1 * b2, dim=-1, keepdim=True)
     b2 = b2 - dot_b1_b2 * b1
-    b2 = F.normalize(b2, dim=-1)
+    b2 = func.normalize(b2, dim=-1)
     b3 = torch.cross(b1, b2, dim=-1)
     # Form the rotation matrix by stacking b1, b2, b3 as rows
     rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
@@ -133,18 +137,20 @@ def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
     axisang = matrix_to_axis_angle(rotmat)  # Shape (-1, 3)
 
     # Reshape back to (..., n*3)
-    axisang = axisang.reshape(*dims[:-1], dims[-1] // 2)
+    return axisang.reshape(*dims[:-1], dims[-1] // 2)
 
-    return axisang
 
 
 def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
     """Convert an axis-angle representation to a 6D representation.
+
     Input: (..., n*3) tensor
-    Output: (..., n*6) tensor
+    Output: (..., n*6) tensor.
     """
     dims = x.shape
-    assert x.shape[-1] % 3 == 0, "Last dimension must be a multiple of 3."
+    if x.shape[-1] % 3 != 0:
+        msg = f"Last dimension must be a multiple of 3. Got {x.shape[-1]}."
+        raise ValueError(msg)
 
     # Reshape (..., n*3) to (-1, 3)
     x = x.reshape(-1, 3)
@@ -156,13 +162,13 @@ def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
     sixd = rotmat[..., :2, :]  # Shape (-1, 2, 3)
 
     # Reshape back to original dimensions (..., n*6)
-    sixd = sixd.reshape(*dims[:-1], dims[-1] * 2)
+    return sixd.reshape(*dims[:-1], dims[-1] * 2)
 
-    return sixd
 
 
 def test_sixd_conversion() -> None:
     """Test the conversion between 6D and axis-angle representations.
+
     Also test if gradients are propagated correctly.
     """
     tests = [
@@ -198,12 +204,16 @@ def test_sixd_conversion() -> None:
 
 def loop_consistency_test(x6: torch.Tensor) -> tuple[bool, torch.Tensor]:
     """Test the consistency of the conversion functions.
+
     Args:
         x6 (torch.Tensor): Input tensor with shape (..., n*6)
+
     Returns:
         tuple[bool, torch.Tensor]: A tuple containing:
             - A boolean indicating if the conversion is consistent.
-            - The maximum error in the conversion."""
+    - The maximum error in the conversion.
+
+    """
     x3 = sixd_to_axisang(x6)
     x6_ = axisang_to_sixd(x3)
     x3_ = sixd_to_axisang(x6_)
