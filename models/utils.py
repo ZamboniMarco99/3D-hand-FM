@@ -7,6 +7,8 @@ that are helpful in processing data, executing MANO models, and other related ta
 
 import torch
 from manopth.manolayer import ManoLayer
+from pytorch3d.transforms import matrix_to_axis_angle, axis_angle_to_matrix
+import torch.nn.functional as F
 
 
 def get_mano_joints(
@@ -102,3 +104,77 @@ def project_joints_to_2d(
 
     # Stack all batches
     return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
+
+
+def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 6D representation to an axis-angle representation
+    using a Gram-Schmidt-like process.
+    Input: (..., n*6) tensor
+    Output: (..., n*3) tensor
+    """
+    dims = x.shape
+    assert x.shape[-1] % 6 == 0, "Last dimension must be a multiple of 6."
+
+    # Reshape (..., n*6) to (-1, 6)
+    x = x.reshape(-1, 6)
+
+    # Convert 6D to rotation matrix using Gram-Schmidt-like process
+    b1 = x[..., :3]
+    b2 = x[..., 3:]
+    b1 = F.normalize(b1, dim=-1)
+    dot_b1_b2 = torch.sum(b1 * b2, dim=-1, keepdim=True)
+    b2 = b2 - dot_b1_b2 * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    # Form the rotation matrix by stacking b1, b2, b3 as rows
+    rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
+
+    # Convert rotation matrix to axis-angle
+    axisang = matrix_to_axis_angle(rotmat)  # Shape (-1, 3)
+
+    # Reshape back to (..., n*3)
+    axisang = axisang.reshape(*dims[:-1], dims[-1] // 2)
+
+    return axisang
+
+
+def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert an axis-angle representation to a 6D representation.
+    Input: (..., n*3) tensor
+    Output: (..., n*6) tensor
+    """
+    dims = x.shape
+    assert x.shape[-1] % 3 == 0, "Last dimension must be a multiple of 3."
+
+    # Reshape (..., n*3) to (-1, 3)
+    x = x.reshape(-1, 3)
+
+    # Convert axis-angle to rotation matrix
+    rotmat = axis_angle_to_matrix(x)  # Shape (-1, 3, 3)
+
+    # take first two rows of rotation matrix
+    sixd = rotmat[..., :2, :]  # Shape (-1, 2, 3)
+
+    # Reshape back to original dimensions (..., n*6)
+    sixd = sixd.reshape(*dims[:-1], dims[-1] * 2)
+
+    return sixd
+
+
+def test_sixd_conversion():
+    tests = [
+        torch.randn(100, 1, 6),
+        torch.randn(10, 100, 100, 96),
+        torch.randn(3, 4, 5, 2, 6),
+    ]
+    for test in tests:
+        print(f"{test.shape}: {loop_consistency_test(test)}")
+
+
+def loop_consistency_test(x6):
+    x3 = sixd_to_axisang(x6)
+    x6_ = axisang_to_sixd(x3)
+    x3_ = sixd_to_axisang(x6_)
+    x6__ = axisang_to_sixd(x3_)
+    error = torch.reshape(x6_ - x6__, (1, -1))
+    return torch.allclose(x6_, x6__, atol=1e-5), torch.max(torch.abs(error))
