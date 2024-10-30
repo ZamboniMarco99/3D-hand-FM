@@ -161,17 +161,49 @@ def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
     return sixd
 
 
-def test_sixd_conversion():
+def test_sixd_conversion() -> None:
+    """Test the conversion between 6D and axis-angle representations.
+    Also test if gradients are propagated correctly.
+    """
     tests = [
-        torch.randn(100, 1, 6),
+        torch.randn(6),
         torch.randn(10, 100, 100, 96),
         torch.randn(3, 4, 5, 2, 6),
     ]
     for test in tests:
         print(f"{test.shape}: {loop_consistency_test(test)}")
 
+    # test to see if gradients are propagated correctly
+    # the reversed process gets stuck in a local minimum
+    x = torch.randn(1, 3, requires_grad=True)
+    print("Input tensor:", x)
+    x_ = torch.randn(1, 3, requires_grad=True)
+    y = axisang_to_sixd(x).detach()
 
-def loop_consistency_test(x6):
+    optimizer = torch.optim.SGD([x_], lr=0.1)  # SGD optimizer with learning rate 0.01
+
+    num_iterations = 500
+    for i in range(num_iterations):
+        optimizer.zero_grad()
+        x6 = axisang_to_sixd(x_)  # dummy operation
+        loss = torch.mean((y - x6) ** 2)
+        loss.backward()
+        optimizer.step()
+
+        if i % 100 == 0:
+            print(f"Iteration {i}: Loss = {loss.item()}")
+
+    print("Final optimized input_tensor:", x_)
+
+
+def loop_consistency_test(x6: torch.Tensor) -> tuple[bool, torch.Tensor]:
+    """Test the consistency of the conversion functions.
+    Args:
+        x6 (torch.Tensor): Input tensor with shape (..., n*6)
+    Returns:
+        tuple[bool, torch.Tensor]: A tuple containing:
+            - A boolean indicating if the conversion is consistent.
+            - The maximum error in the conversion."""
     x3 = sixd_to_axisang(x6)
     x6_ = axisang_to_sixd(x3)
     x3_ = sixd_to_axisang(x6_)
