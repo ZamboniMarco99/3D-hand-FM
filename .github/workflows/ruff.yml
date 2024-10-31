@@ -31,7 +31,7 @@ jobs:
       - name: Create virtual environment
         run: uv venv
       - name: Install build dependencies
-        run: uv pip install pip setuptools
+        run: uv pip install pip setuptools torch
       - name: Install dependencies
         run: uv sync --all-extras --dev
       - name: lint
