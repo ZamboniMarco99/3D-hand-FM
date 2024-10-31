@@ -6,7 +6,7 @@ that are helpful in processing data, executing MANO models, and other related ta
 """
 
 import torch
-import torch.nn.functional as F # noqa: N812
+import torch.nn.functional as F  # noqa: N812
 from manopth.manolayer import ManoLayer
 from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
