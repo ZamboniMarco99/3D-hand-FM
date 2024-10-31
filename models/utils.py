@@ -6,7 +6,7 @@ that are helpful in processing data, executing MANO models, and other related ta
 """
 
 import torch
-import torch.nn.functional as func
+import torch.nn.functional as F # noqa: N812
 from manopth.manolayer import ManoLayer
 from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
@@ -125,10 +125,10 @@ def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
     # Convert 6D to rotation matrix using Gram-Schmidt-like process
     b1 = x[..., :3]
     b2 = x[..., 3:]
-    b1 = func.normalize(b1, dim=-1)
+    b1 = F.normalize(b1, dim=-1)
     dot_b1_b2 = torch.sum(b1 * b2, dim=-1, keepdim=True)
     b2 = b2 - dot_b1_b2 * b1
-    b2 = func.normalize(b2, dim=-1)
+    b2 = F.normalize(b2, dim=-1)
     b3 = torch.cross(b1, b2, dim=-1)
     # Form the rotation matrix by stacking b1, b2, b3 as rows
     rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
