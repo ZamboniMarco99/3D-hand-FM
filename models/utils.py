@@ -140,7 +140,6 @@ def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
     return axisang.reshape(*dims[:-1], dims[-1] // 2)
 
 
-
 def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
     """Convert an axis-angle representation to a 6D representation.
 
@@ -163,7 +162,6 @@ def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
 
     # Reshape back to original dimensions (..., n*6)
     return sixd.reshape(*dims[:-1], dims[-1] * 2)
-
 
 
 def test_sixd_conversion() -> None:
