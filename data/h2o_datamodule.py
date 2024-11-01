@@ -137,7 +137,7 @@ class H2ODataset(Dataset):
                             [fx * scale, 0, cx * scale - crop_x],
                             [0, fy * scale, cy * scale - crop_y],
                             [0, 0, 1],
-                        ],
+                        ], dtype=np.float32
                     )
                     self.camera_intrinsics.append(intrinsics)
 
@@ -311,7 +311,7 @@ class H2ODataModule(pl.LightningDataModule):
 
     """
 
-    train_scenes = (
+    train_scenes = [
         "subject1/h1",
         "subject1/h2",
         "subject1/k1",
@@ -327,9 +327,9 @@ class H2ODataModule(pl.LightningDataModule):
         "subject3/h1",
         "subject3/h2",
         "subject3/k1",
-    )
+    ]
 
-    val_scenes = ("subject3/k2", "subject3/o1", "subject3/o2")
+    val_scenes = ["subject3/k2", "subject3/o1", "subject3/o2"]
 
     def __init__(
         self,

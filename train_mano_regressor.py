@@ -47,6 +47,8 @@ def main(cfg: DictConfig) -> None:
         mano_root=os.environ.get("MANO_ROOT"),
         learning_rate=cfg.model.learning_rate,
         pretrained=cfg.data.pretrained,
+        mano_params=cfg.model.mano_params,
+        sixd=cfg.model.sixd,
     )
     logger.info("Model initialized")
 

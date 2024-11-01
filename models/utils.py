@@ -16,6 +16,7 @@ def get_mano_joints(
     mano_params_right: torch.Tensor,
     mano_left: ManoLayer,
     mano_right: ManoLayer,
+    from_sixd: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Execute the MANO model to generate hand joints.
 
@@ -36,6 +37,10 @@ def get_mano_joints(
     # Get the device of mano_params
     batch_size = mano_params_left.shape[0]
     num_frames = mano_params_left.shape[1]
+
+    if from_sixd:
+        mano_params_left = sixd_to_mano(mano_params_left)
+        mano_params_right = sixd_to_mano(mano_params_right)
 
     # Push the time dimension in the batch dimension
     left_params = mano_params_left.view(-1, mano_params_left.shape[2])
@@ -104,6 +109,49 @@ def project_joints_to_2d(
 
     # Stack all batches
     return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
+
+
+def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 61=3+10+48 element MANO pose parameter to a 109=3+10+96  6D representation.
+
+    Args:
+        x (torch.Tensor): Input tensor with shape (..., 61)
+
+    Returns:
+        torch.Tensor: Output tensor with shape (..., 109)
+
+    """
+    translation = x[..., :3]
+    pose = x[..., 3:-10]
+    shape = x[..., -10:]
+
+    # Convert pose to 6D representation
+    pose_6d = axisang_to_sixd(pose)
+
+    # Concatenate translation, shape, and pose_6d
+    return torch.cat([translation, pose_6d, shape], dim=-1)
+
+
+def sixd_to_mano(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 109=3+10+96 element 6D representation to a 61=3+10+48 element MANO pose parameter.
+
+    Args:
+        x (torch.Tensor): Input tensor with shape (..., 109)
+
+    Returns:
+        torch.Tensor: Output tensor with shape (..., 61)
+
+    """
+    # Split the input tensor into translation, shape, and pose_6d parameters
+    translation = x[..., :3]
+    pose_6d = x[..., 3:-10]
+    shape = x[...,-10:]
+
+    # Convert pose_6d to axis-angle representation
+    pose = sixd_to_axisang(pose_6d)
+
+    # Concatenate translation, pose, and shape
+    return torch.cat([translation, pose, shape], dim=-1)
 
 
 def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
@@ -176,6 +224,12 @@ def test_sixd_conversion() -> None:
     ]
     for test in tests:
         print(f"{test.shape}: {loop_consistency_test(test)}")
+
+    # test if the mano conversion is consistent
+    x = torch.randn(1, 61)
+    y = mano_to_sixd(x)
+    x_ = sixd_to_mano(y)
+    print(f"Mano Conversion works: ", torch.allclose(x, x_, atol=1e-5))
 
     # test to see if gradients are propagated correctly
     # the reversed process gets stuck in a local minimum

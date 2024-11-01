@@ -20,7 +20,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints, project_joints_to_2d
+from models.utils import get_mano_joints, project_joints_to_2d, mano_to_sixd, sixd_to_mano
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -206,6 +206,7 @@ class VideoMANORegressor(pl.LightningModule):
         mano_params: int = 61,  # Single hand, 61 parameters
         learning_rate: float = 1e-3,  # noqa: ARG002
         pretrained: bool = False,
+        sixd: bool = False,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -278,6 +279,7 @@ class VideoMANORegressor(pl.LightningModule):
             side="right",
         )
         self.mano_right.requires_grad_(requires_grad=False)
+        self.sixd = sixd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
@@ -302,6 +304,7 @@ class VideoMANORegressor(pl.LightningModule):
             right_hand_params,
             self.mano_left,
             self.mano_right,
+            self.sixd,
         )
 
         return left_hand_params, right_hand_params, left_hand_joints, right_hand_joints
@@ -347,14 +350,14 @@ class VideoMANORegressor(pl.LightningModule):
         pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
         pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
         # Left hand loss
-        pose_loss_left = F.mse_loss(y_pred_left[..., :45], y_true_left[..., :45])
+        pose_loss_left = F.mse_loss(y_pred_left[..., :-10], y_true_left[..., :-10])
         shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
         keypoints_loss_left = F.l1_loss(pred_left_hand_joints, true_left_hand_joints)
         keypoints_2d_loss_left = F.l1_loss(pred_keypoints_2d_left, true_keypoints_2d_left)
         left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left + keypoints_2d_loss_left
 
         # Right hand loss
-        pose_loss_right = F.mse_loss(y_pred_right[..., :45], y_true_right[..., :45])
+        pose_loss_right = F.mse_loss(y_pred_right[..., :-10], y_true_right[..., :-10])
         shape_loss_right = F.mse_loss(y_pred_right[..., -10:], y_true_right[..., -10:])
         keypoints_loss_right = F.l1_loss(pred_right_hand_joints, true_right_hand_joints)
         keypoints_2d_loss_right = F.l1_loss(pred_keypoints_2d_right, true_keypoints_2d_right)
@@ -373,7 +376,12 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: Loss value.
 
         """
-        x, y_left, y_right, _ = batch
+        x, y_left, y_right, intrinsic_matrix = batch
+
+        if self.sixd:
+            # convert to 6D pose
+            y_left = mano_to_sixd(y_left)
+            y_right = mano_to_sixd(y_right)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
@@ -384,6 +392,7 @@ class VideoMANORegressor(pl.LightningModule):
             y_right,
             self.mano_left,
             self.mano_right,
+            self.sixd,
         )
         left_loss, right_loss = self.loss_function(
             y_pred_left,
@@ -394,6 +403,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints,
             true_left_hand_joints,
             true_right_hand_joints,
+            intrinsic_matrix,
         )
         loss = left_loss + right_loss
 
@@ -428,7 +438,12 @@ class VideoMANORegressor(pl.LightningModule):
             batch_idx (int): Index of the batch.
 
         """
-        x, y_left, y_right, _ = batch
+        x, y_left, y_right, intrinsic_matrix = batch
+
+        if self.sixd:
+            # convert to 6D pose
+            y_left = mano_to_sixd(y_left)
+            y_right = mano_to_sixd(y_right)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
@@ -439,6 +454,7 @@ class VideoMANORegressor(pl.LightningModule):
             y_right,
             self.mano_left,
             self.mano_right,
+            self.sixd,
         )
         left_loss, right_loss = self.loss_function(
             y_pred_left,
@@ -449,6 +465,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints,
             true_left_hand_joints,
             true_right_hand_joints,
+            intrinsic_matrix,
         )
         loss = left_loss + right_loss
 
