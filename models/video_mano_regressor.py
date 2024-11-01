@@ -20,7 +20,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints, project_joints_to_2d, mano_to_sixd, sixd_to_mano
+from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -221,6 +221,7 @@ class VideoMANORegressor(pl.LightningModule):
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 61.
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
+            sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor

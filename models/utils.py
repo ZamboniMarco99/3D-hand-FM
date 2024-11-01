@@ -27,6 +27,7 @@ def get_mano_joints(
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano_left (ManoLayer): MANO model for the left hand.
         mano_right (ManoLayer): MANO model for the right hand.
+        from_sixd (bool): If True, the input parameters are in 6D representation. Default: False.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -229,7 +230,7 @@ def test_sixd_conversion() -> None:
     x = torch.randn(1, 61)
     y = mano_to_sixd(x)
     x_ = sixd_to_mano(y)
-    print(f"Mano Conversion works: ", torch.allclose(x, x_, atol=1e-5))
+    print("Mano Conversion works: ", torch.allclose(x, x_, atol=1e-5))
 
     # test to see if gradients are propagated correctly
     # the reversed process gets stuck in a local minimum
