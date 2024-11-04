@@ -41,7 +41,7 @@ def get_mano_joints(
 
     if from_sixd:
         mano_params_left = sixd_to_mano(mano_params_left)
-        mano_params_right = sixd_to_mano(mano_params_right)
+        mano_params_right = mirror_mano_params(sixd_to_mano(mano_params_right))
 
     # Push the time dimension in the batch dimension
     left_params = mano_params_left.view(-1, mano_params_left.shape[2])
@@ -110,6 +110,25 @@ def project_joints_to_2d(
 
     # Stack all batches
     return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
+
+def mirror_mano_params(mano_params: torch.Tensor) -> torch.Tensor:
+    """Mirror the MANO parameters in axis angle format from left to right and vice versa.
+
+    Args:
+        mano_params (torch.Tensor): Input tensor with shape (..., 61)
+
+    Returns:
+        torch.Tensor: Output tensor with shape (..., 61)
+
+    """
+    mirrored = mano_params.clone()
+    # z from translation
+    mirrored[...,0]*=-1
+    # y, z from Pose
+    mirrored[...,4:-10:3]*=-1
+    mirrored[...,5:-10:3]*=-1
+
+    return mirrored
 
 
 def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:
