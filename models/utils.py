@@ -7,6 +7,7 @@ that are helpful in processing data, executing MANO models, and other related ta
 
 import torch
 import torch.nn.functional as F  # noqa: N812
+import torch.nn as nn
 from manopth.manolayer import ManoLayer
 from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
@@ -111,6 +112,7 @@ def project_joints_to_2d(
     # Stack all batches
     return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
 
+
 def mirror_mano_params(mano_params: torch.Tensor) -> torch.Tensor:
     """Mirror the MANO parameters in axis angle format from left to right and vice versa.
 
@@ -123,10 +125,10 @@ def mirror_mano_params(mano_params: torch.Tensor) -> torch.Tensor:
     """
     mirrored = mano_params.clone()
     # z from translation
-    mirrored[...,0]*=-1
+    mirrored[..., 0] *= -1
     # y, z from Pose
-    mirrored[...,4:-10:3]*=-1
-    mirrored[...,5:-10:3]*=-1
+    mirrored[..., 4:-10:3] *= -1
+    mirrored[..., 5:-10:3] *= -1
 
     return mirrored
 
@@ -165,7 +167,7 @@ def sixd_to_mano(x: torch.Tensor) -> torch.Tensor:
     # Split the input tensor into translation, shape, and pose_6d parameters
     translation = x[..., :3]
     pose_6d = x[..., 3:-10]
-    shape = x[...,-10:]
+    shape = x[..., -10:]
 
     # Convert pose_6d to axis-angle representation
     pose = sixd_to_axisang(pose_6d)
@@ -292,3 +294,83 @@ def loop_consistency_test(x6: torch.Tensor) -> tuple[bool, torch.Tensor]:
     x6__ = axisang_to_sixd(x3_)
     error = torch.reshape(x6_ - x6__, (1, -1))
     return torch.allclose(x6_, x6__, atol=1e-5), torch.max(torch.abs(error))
+
+
+def regression_mlp(layers_sizes):
+    """
+    Create a regression MLP with ReLU activations.
+    Args:
+        layers_sizes:
+
+    Returns:
+        torch.nn.Sequential: A sequential model with the specified layers.
+    """
+    assert len(layers_sizes) >= 2
+    in_features = layers_sizes[0]
+    layers = []
+    for i in range(1, len(layers_sizes) - 1):
+        out_features = layers_sizes[i]
+        layers.append(torch.nn.Linear(in_features, out_features))
+        layers.append(torch.nn.ReLU())
+        in_features = out_features
+    layers.append(torch.nn.Linear(in_features, layers_sizes[-1]))
+    return torch.nn.Sequential(*layers)
+
+
+def apply_threshold(det_thresh: float, _scores: torch.Tensor):
+    """
+    Apply thresholding to detection scores; if stack_K is used and det_thresh is a list, apply to each channel separately
+
+    Args:
+        det_thresh: float or list of floats
+        _scores: torch.Tensor of shape (N, K, H, W)
+
+        Returns:
+            idx: torch.Tensor of shape (N, K, H, W)
+    """
+    if isinstance(det_thresh, list):
+        det_thresh = det_thresh[0]
+    idx = torch.where(_scores >= det_thresh)
+    return idx
+
+
+def _nms(heat: torch.Tensor, kernel: int = 3):
+    """
+    Perform non-maximum suppression on the heatmap using max-pooling.
+    Args:
+        heat: heatmap with probabilities
+        kernel: window size for suppression
+
+    Returns:
+        torch.Tensor:
+    """
+
+    if kernel not in [2, 4]:
+        pad = (kernel - 1) // 2
+    else:
+        if kernel == 2:
+            pad = 1
+        else:
+            pad = 2
+
+    hmax = nn.functional.max_pool2d(heat, (kernel, kernel), stride=1, padding=pad)
+
+    if hmax.shape[2] > heat.shape[2]:
+        hmax = hmax[:, :, : heat.shape[2], : heat.shape[3]]
+
+    keep = (hmax == heat).float()
+
+    return heat * keep
+
+
+def _sigmoid(x):
+    """
+    Sigmoid function with clamping to avoid overflow.
+    Args:
+        x: torch.Tensor
+
+    Returns:
+        torch.Tensor
+    """
+    y = torch.clamp(x.sigmoid_(), min=1e-4, max=1 - 1e-4)
+    return y

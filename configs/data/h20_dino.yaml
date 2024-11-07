@@ -5,11 +5,11 @@ resolution: "1x1"
 num_frames: 4
 framerate: 7.5
 pretrained: False
-crop: False
+crop: True
 mean:
-    - 0.45
-    - 0.45
-    - 0.45
+  - 0.45
+  - 0.45
+  - 0.45
 cameras:
   - "cam0"
   - "cam1"
