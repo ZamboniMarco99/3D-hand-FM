@@ -1,0 +1,1 @@
+MANO_ROOT = "/cluster/home/horatan/hand-fm/data/mano"

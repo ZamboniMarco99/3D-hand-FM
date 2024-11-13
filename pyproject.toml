@@ -17,17 +17,19 @@ dependencies = [
     "torchaudio>=2.4.1",
     "torchvision>=0.19.1",
     "wandb>=0.12.10",
+    "pytorch3d",
 ]
 
 [tool.uv]
 dev-dependencies = [
     "ruff>=0.6.8",
 ]
-no-build-isolation-package = ["chumpy"]
+no-build-isolation-package = ["chumpy", "pytorch3d"]
 
 [tool.uv.sources]
 manopth = { git = "https://github.com/hassony2/manopth" }
 chumpy = { git = "https://github.com/mattloper/chumpy", rev = "9b045ff5d6588a24a0bab52c83f032e2ba433e17" }
+pytorch3d = { git = "https://github.com/facebookresearch/pytorch3d", rev = "stable" }
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -37,7 +39,9 @@ select = ["ALL"]
 # Avoid enforcing docstrings in __init__.py
 # Permit f-strings in logging
 # Permit boolean types in functions
-ignore = ["T201", "D401", "PLR0913", "D104", "G004", "FBT001", "FBT002"]
+# Permit docstrings that are preceded by a blank line
+# Permit docstrings to start on the second physical line of the docstring
+ignore = ["T201", "D401", "PLR0913", "D104", "G004", "FBT001", "FBT002", "D203", "D213"]
 
 [tool.ruff]
 line-length = 120

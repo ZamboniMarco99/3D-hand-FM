@@ -9,10 +9,12 @@ from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
 
 from data.h2o_datamodule import H2ODataModule
-from models.video_mano_regressor import VideoMANORegressor
+from models.video_dino_mano_regressor import VideoMANORegressor
+from pytorch_lightning.strategies import DDPStrategy
+from constants import MANO_ROOT
 
 
-@hydra.main(config_path="configs", config_name="train_mano_regressor.yaml", version_base="1.1")
+@hydra.main(config_path="configs", config_name="train_dino_mano_regressor.yaml", version_base="1.1")
 def main(cfg: DictConfig) -> None:
     """Train model using PyTorch Lightning with Weights & Biases logging and Hydra configuration."""
     # Set up logging
@@ -28,7 +30,8 @@ def main(cfg: DictConfig) -> None:
         num_frames=cfg.data.num_frames,
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
-        crop=cfg.data.pretrained,
+        crop=cfg.data.crop,
+        mean=cfg.data.mean,
     )
     logger.info("DataModule initialized")
 
@@ -44,9 +47,11 @@ def main(cfg: DictConfig) -> None:
         num_frames=cfg.data.num_frames,
         height=height,
         width=width,
-        mano_root=os.environ.get("MANO_ROOT"),
+        mano_root=MANO_ROOT,
         learning_rate=cfg.model.learning_rate,
         pretrained=cfg.data.pretrained,
+        mano_params=cfg.model.mano_params,
+        sixd=cfg.model.sixd,
     )
     logger.info("Model initialized")
 
@@ -65,7 +70,8 @@ def main(cfg: DictConfig) -> None:
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
         logger=wandb_logger,
-        log_every_n_steps=16,
+        log_every_n_steps=cfg.trainer.log_every_n_steps,
+        strategy=DDPStrategy(find_unused_parameters=True)
     )
     logger.info("Trainer initialized")
 

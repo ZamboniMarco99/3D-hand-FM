@@ -2,7 +2,7 @@
 
 defaults:
   - _self_
-  - data: h20_pretrained
+  - data: h20_dino
 
 task_name: "train_mano_regressor"
 

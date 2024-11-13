@@ -76,6 +76,7 @@ class H2ODataset(Dataset):
         max_height: int | None = None,
         num_frames: int | None = None,
         crop: bool = False,
+        mean: tuple[float, float, float] = (0.45, 0.45, 0.45),
         cache: bool = True,
     ) -> None:
         """Initialize the H2ODataset.
@@ -101,6 +102,7 @@ class H2ODataset(Dataset):
         self.camera_intrinsics = []
         self.num_clips = 0
         self.num_frames = num_frames
+        self.mean = tuple(mean)
         self.cache = cache
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
@@ -138,6 +140,7 @@ class H2ODataset(Dataset):
                             [0, fy * scale, cy * scale - crop_y],
                             [0, 0, 1],
                         ],
+                        dtype=np.float32,
                     )
                     self.camera_intrinsics.append(intrinsics)
 
@@ -270,7 +273,7 @@ class H2ODataset(Dataset):
             )
 
         # Convert list of numpy arrays to PyTorch tensors
-        clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=self.mean, std=(0.225, 0.225, 0.225))
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
@@ -329,7 +332,11 @@ class H2ODataModule(pl.LightningDataModule):
         "subject3/k1",
     )
 
-    val_scenes = ("subject3/k2", "subject3/o1", "subject3/o2")
+    val_scenes = (
+        "subject3/k2",
+        "subject3/o1",
+        "subject3/o2",
+    )
 
     def __init__(
         self,
@@ -341,6 +348,7 @@ class H2ODataModule(pl.LightningDataModule):
         num_frames: int = 300,
         num_workers: int = 8,
         crop: bool = False,
+        mean: tuple[float, float, float] = (0.45, 0.45, 0.45),
     ) -> None:
         """Initialize the H2ODataModule.
 
@@ -364,6 +372,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.num_frames = num_frames
         self.num_workers = num_workers
         self.crop = crop
+        self.mean = mean
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -388,6 +397,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            mean=self.mean,
             cache=False,
         )
         self.val_dataset = H2ODataset(
@@ -398,6 +408,7 @@ class H2ODataModule(pl.LightningDataModule):
             max_height=self.max_height,
             num_frames=self.num_frames,
             crop=self.crop,
+            mean=self.mean,
             cache=False,
         )
 
