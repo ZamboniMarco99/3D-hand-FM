@@ -22,7 +22,7 @@ logger:
   log_model: True
 
 trainer:
-  log_every_n_steps: 1
+  log_every_n_steps: 50
   max_epochs: 200
   accelerator: "auto"
   devices: 1

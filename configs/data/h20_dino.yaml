@@ -16,5 +16,5 @@ cameras:
   - "cam2"
   - "cam3"
 loader:
-  batch_size: 2
-  num_workers: 2
+  batch_size: 8
+  num_workers: 15

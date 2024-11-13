@@ -187,23 +187,17 @@ class VideoMANORegressor(pl.LightningModule):
             tuple[torch.Tensor, torch.Tensor]: The computed losses for left and right hands.
 
         """
-        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
-        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
         # Left hand loss
-        pose_loss_left = F.mse_loss(y_pred_left[..., :-10], y_true_left[..., :-10])
+        tran_loss_left = F.mse_loss(y_pred_left[..., :3], y_true_left[..., :3])
+        pose_loss_left = F.mse_loss(y_pred_left[..., 3:-10], y_true_left[..., 3:-10])
         shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
-        keypoints_loss_left = F.l1_loss(pred_left_hand_joints, true_left_hand_joints)
-        keypoints_2d_loss_left = F.l1_loss(pred_keypoints_2d_left, true_keypoints_2d_left)
-        left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left + keypoints_2d_loss_left
+        left_hand_loss = pose_loss_left + shape_loss_left + tran_loss_left
 
         # Right hand loss
-        pose_loss_right = F.mse_loss(y_pred_right[..., :-10], y_true_right[..., :-10])
+        tran_loss_right = F.mse_loss(y_pred_right[..., :3], y_true_right[..., :3])
+        pose_loss_right = F.mse_loss(y_pred_right[..., 3:-10], y_true_right[..., 3:-10])
         shape_loss_right = F.mse_loss(y_pred_right[..., -10:], y_true_right[..., -10:])
-        keypoints_loss_right = F.l1_loss(pred_right_hand_joints, true_right_hand_joints)
-        keypoints_2d_loss_right = F.l1_loss(pred_keypoints_2d_right, true_keypoints_2d_right)
-        right_hand_loss = pose_loss_right + shape_loss_right + keypoints_loss_right + keypoints_2d_loss_right
+        right_hand_loss = pose_loss_right + shape_loss_right + tran_loss_right
 
         return left_hand_loss, right_hand_loss
 
@@ -259,16 +253,16 @@ class VideoMANORegressor(pl.LightningModule):
         left_mae = F.l1_loss(y_pred_left, y_left)
         right_mae = F.l1_loss(y_pred_right, y_right)
 
-        self.log("train/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/left_loss", left_loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("train/right_loss", right_loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("train/loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("train/mean_left_mse", left_mse, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_right_mse", right_mse, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_left_mae", left_mae, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_right_mae", right_mae, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_left_mje", left_mje, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_right_mje", right_mje, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("train/mean_mje", left_mje + right_mje, on_step=True, on_epoch=False, sync_dist=True)
 
         return loss
 
@@ -321,16 +315,16 @@ class VideoMANORegressor(pl.LightningModule):
         left_mae = F.l1_loss(y_pred_left, y_left)
         right_mae = F.l1_loss(y_pred_right, y_right)
 
-        self.log("val/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/left_loss", left_loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("val/right_loss", right_loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("val/loss", loss, on_step=True, on_epoch=False, prog_bar=True, sync_dist=True)
+        self.log("val/mean_left_mse", left_mse, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_right_mse", right_mse, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_left_mae", left_mae, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_right_mae", right_mae, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_left_mje", left_mje, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_right_mje", right_mje, on_step=True, on_epoch=False, sync_dist=True)
+        self.log("val/mean_mje", left_mje + right_mje, on_step=True, on_epoch=False, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.

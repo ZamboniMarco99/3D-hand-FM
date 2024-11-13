@@ -316,25 +316,26 @@ class H2ODataModule(pl.LightningDataModule):
 
     train_scenes = (
         "subject1/h1",
-        # "subject1/h2",
-        # "subject1/k1",
-        # "subject1/k2",
-        # "subject1/o1",
-        # "subject1/o2",
-        # "subject2/h1",
-        # "subject2/h2",
-        # "subject2/k1",
-        # "subject2/k2",
-        # "subject2/o1",
-        # "subject2/o2",
-        # "subject3/h1",
-        # "subject3/h2",
-        # "subject3/k1",
+        "subject1/h2",
+        "subject1/k1",
+        "subject1/k2",
+        "subject1/o1",
+        "subject1/o2",
+        "subject2/h1",
+        "subject2/h2",
+        "subject2/k1",
+        "subject2/k2",
+        "subject2/o1",
+        "subject2/o2",
+        "subject3/h1",
+        "subject3/h2",
+        "subject3/k1",
     )
 
     val_scenes = (
-        "subject4/h1",
-        # "subject3/k2", "subject3/o1", "subject3/o2"
+        "subject3/k2",
+        "subject3/o1",
+        "subject3/o2",
     )
 
     def __init__(
