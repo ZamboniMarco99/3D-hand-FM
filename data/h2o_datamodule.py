@@ -108,10 +108,7 @@ class H2ODataset(Dataset):
         self.num_clips = 0
         self.num_frames = num_frames
         self.cache = cache
-        if transforms is not None:
-            self.transforms = nn.Sequential(*transforms)
-        else:
-            self.transforms = nn.Identity()
+        self.transforms = transforms
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
 
@@ -290,7 +287,11 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        return self.transforms(clip, mano_left, mano_right, torch.from_numpy(intrinsics, dtype=torch.float32))
+        if self.transforms is not None:
+            for transform in self.transforms:
+                clip, mano_left, mano_right, intrinsics = transform(clip, mano_left, mano_right, intrinsics)
+
+        return clip, mano_left, mano_right, torch.from_numpy(intrinsics, dtype=torch.float32)
 
 
 class H2ODataModule(pl.LightningDataModule):
