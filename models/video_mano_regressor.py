@@ -316,7 +316,10 @@ class VideoMANORegressor(pl.LightningModule):
         pred_right_hand_joints: torch.Tensor,
         true_left_hand_joints: torch.Tensor,
         true_right_hand_joints: torch.Tensor,
-        intrinsic_matrix: torch.Tensor,
+        pred_keypoints_2d_left: torch.Tensor,
+        pred_keypoints_2d_right: torch.Tensor,
+        true_keypoints_2d_left: torch.Tensor,
+        true_keypoints_2d_right: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the loss for the model.
 
@@ -336,16 +339,15 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints (torch.Tensor): Predicted 3D keypoints for right hand.
             true_left_hand_joints (torch.Tensor): Ground truth 3D keypoints for left hand.
             true_right_hand_joints (torch.Tensor): Ground truth 3D keypoints for right hand.
-            intrinsic_matrix (torch.Tensor): Camera intrinsic matrix.
+            pred_keypoints_2d_left (torch.Tensor): Predicted 2D keypoints for left hand.
+            pred_keypoints_2d_right (torch.Tensor): Predicted 2D keypoints for right hand.
+            true_keypoints_2d_left (torch.Tensor): Ground truth 2D keypoints for left hand.
+            true_keypoints_2d_right (torch.Tensor): Ground truth 2D keypoints for right hand.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]: The computed losses for left and right hands.
 
         """
-        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
-        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
         # Left hand loss
         pose_loss_left = F.mse_loss(y_pred_left[..., :45], y_true_left[..., :45])
         shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
@@ -385,6 +387,13 @@ class VideoMANORegressor(pl.LightningModule):
             self.mano_left,
             self.mano_right,
         )
+
+        # Project 3D joints to 2D
+        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
+        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
+
         left_loss, right_loss = self.loss_function(
             y_pred_left,
             y_pred_right,
@@ -394,7 +403,10 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints,
             true_left_hand_joints,
             true_right_hand_joints,
-            intrinsic_matrix,
+            pred_keypoints_2d_left,
+            pred_keypoints_2d_right,
+            true_keypoints_2d_left,
+            true_keypoints_2d_right,
         )
         loss = left_loss + right_loss
 
@@ -403,6 +415,13 @@ class VideoMANORegressor(pl.LightningModule):
         right_mje = (
             torch.linalg.vector_norm(pred_right_hand_joints - true_right_hand_joints, dim=-1).mean(dim=-1).mean()
         )
+        left_mje_2d = (
+            torch.linalg.vector_norm(pred_keypoints_2d_left - true_keypoints_2d_left, dim=-1).mean(dim=-1).mean()
+        )
+        right_mje_2d = (
+            torch.linalg.vector_norm(pred_keypoints_2d_right - true_keypoints_2d_right, dim=-1).mean(dim=-1).mean()
+        )
+
         left_mse = F.mse_loss(y_pred_left, y_left)
         right_mse = F.mse_loss(y_pred_right, y_right)
         left_mae = F.l1_loss(y_pred_left, y_left)
@@ -418,6 +437,9 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("train/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -441,6 +463,13 @@ class VideoMANORegressor(pl.LightningModule):
             self.mano_left,
             self.mano_right,
         )
+
+        # Project 3D joints to 2D
+        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
+        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
+        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
+
         left_loss, right_loss = self.loss_function(
             y_pred_left,
             y_pred_right,
@@ -450,7 +479,10 @@ class VideoMANORegressor(pl.LightningModule):
             pred_right_hand_joints,
             true_left_hand_joints,
             true_right_hand_joints,
-            intrinsic_matrix,
+            pred_keypoints_2d_left,
+            pred_keypoints_2d_right,
+            true_keypoints_2d_left,
+            true_keypoints_2d_right,
         )
         loss = left_loss + right_loss
 
@@ -459,6 +491,13 @@ class VideoMANORegressor(pl.LightningModule):
         right_mje = (
             torch.linalg.vector_norm(pred_right_hand_joints - true_right_hand_joints, dim=-1).mean(dim=-1).mean()
         )
+        left_mje_2d = (
+            torch.linalg.vector_norm(pred_keypoints_2d_left - true_keypoints_2d_left, dim=-1).mean(dim=-1).mean()
+        )
+        right_mje_2d = (
+            torch.linalg.vector_norm(pred_keypoints_2d_right - true_keypoints_2d_right, dim=-1).mean(dim=-1).mean()
+        )
+
         left_mse = F.mse_loss(y_pred_left, y_left)
         right_mse = F.mse_loss(y_pred_right, y_right)
         left_mae = F.l1_loss(y_pred_left, y_left)
@@ -474,6 +513,9 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("val/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.
