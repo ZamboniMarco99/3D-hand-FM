@@ -45,9 +45,9 @@ class VideoColorJitter(nn.Module):
     def __init__(
         self,
         brightness: float = 0.4,
-        contrast: float = 0.4,
-        saturation: float = 0.4,
-        hue: float = 0.1,
+        contrast: float = 0.05,
+        saturation: float = 0.05,
+        hue: float = 0.05,
     ) -> None:
         """Initialize the VideoColorJitter transform.
 
@@ -129,7 +129,7 @@ class VideoRandomRotation(nn.Module):
 
     """
 
-    def __init__(self, degrees: float = 30) -> None:
+    def __init__(self, degrees: float = 10) -> None:
         """Initialize the RandomRotation transform.
 
         Args:
