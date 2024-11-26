@@ -9,6 +9,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
 
 from data.h2o_datamodule import H2ODataModule
+from data.transforms import VideoColorJitter, VideoRandomRotation
 from models.video_mano_regressor import VideoMANORegressor
 
 
@@ -18,6 +19,15 @@ def main(cfg: DictConfig) -> None:
     # Set up logging
     logging.basicConfig(level=cfg.log_level)
     logger = logging.getLogger(__name__)
+
+    transforms = []
+    if cfg.transforms is not None:
+        if "VideoColorJitter" in cfg.transforms:
+            transforms.append(VideoColorJitter())
+        if "VideoRandomRotation" in cfg.transforms:
+            transforms.append(VideoRandomRotation())
+    else:
+        transforms = None
 
     # Create dataset and dataloaders
     datamodule = H2ODataModule(
@@ -29,6 +39,7 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
         crop=cfg.data.pretrained,
+        transforms=transforms,
     )
     logger.info("DataModule initialized")
 
