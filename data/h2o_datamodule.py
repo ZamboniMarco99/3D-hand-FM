@@ -287,7 +287,7 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        intrinsics = torch.from_numpy(intrinsics, dtype=torch.float32)
+        intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
         if self.transforms is not None:
             for transform in self.transforms:
