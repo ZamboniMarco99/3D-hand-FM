@@ -280,7 +280,7 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        return clip, mano_left, mano_right, torch.from_numpy(intrinsics)
+        return clip, mano_left, mano_right, torch.from_numpy(intrinsics, dtype=torch.float32)
 
 
 class H2ODataModule(pl.LightningDataModule):
