@@ -229,3 +229,83 @@ class VideoRandomRotation(nn.Module):
             )
 
         return video, mano_left, mano_right, intrinsic_matrix
+
+
+class VideoMirror(nn.Module):
+    """Mirror video frames and adjust MANO parameters accordingly.
+
+    This transform horizontally flips the video frames and updates the MANO parameters
+    to maintain consistency with the mirrored view. It also adjusts the camera intrinsics
+    if provided.
+    """
+
+    def __init__(self, p: float = 0.5) -> None:
+        """Initialize the VideoMirror transform.
+
+        Args:
+            p (float, optional): Probability of applying the transform. Defaults to 0.5.
+
+        """
+        super().__init__()
+        self.p = p
+
+    def forward(
+        self,
+        video: Tensor,
+        mano_left: Tensor,
+        mano_right: Tensor,
+        intrinsic_matrix: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+        """Forward pass of the VideoMirror transform.
+
+        Args:
+            video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
+            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
+                containing translation, pose and shape parameters
+            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+                containing translation, pose and shape parameters
+            intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
+
+        Returns:
+            tuple[Tensor, Tensor, Tensor, Tensor | None]: Tuple containing:
+                - Mirrored video tensor
+                - Updated left hand MANO parameters
+                - Updated right hand MANO parameters
+                - Updated camera intrinsic matrix (if provided)
+
+        """
+        if random.random() > self.p:
+            return video, mano_left, mano_right, intrinsic_matrix
+
+        # Handle both batched and unbatched videos
+        need_squeeze = False
+        if video.dim() == 4:  # noqa: PLR2004
+            video = video.unsqueeze(0)
+            need_squeeze = True
+
+        # Mirror the video frames
+        video = torch.flip(video, dims=[-1])
+
+        # Swap left and right hand parameters
+        mano_left, mano_right = mano_right.clone(), mano_left.clone()
+
+        # Mirror the translation parameters (x coordinate)
+        mano_left[..., 0] *= -1
+        mano_right[..., 0] *= -1
+
+        # Mirror relevant pose parameters
+        # For both hands: negate parameters controlling left-right rotation
+        mano_left[..., 1::3] *= -1
+        mano_right[..., 1::3] *= -1
+
+        if need_squeeze:
+            video = video.squeeze(0)
+
+        # Update camera intrinsics if provided
+        if intrinsic_matrix is not None:
+            w = video.shape[-1]
+            intrinsic_matrix = intrinsic_matrix.clone()
+            # Mirror the principal point (cx)
+            intrinsic_matrix[0, 2] = w - intrinsic_matrix[0, 2]
+
+        return video, mano_left, mano_right, intrinsic_matrix
