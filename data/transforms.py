@@ -121,7 +121,7 @@ class VideoColorJitter(nn.Module):
         return video, mano_left, mano_right, intrinsic_matrix
 
 
-class RandomRotation(nn.Module):
+class VideoRandomRotation(nn.Module):
     """Randomly rotate video and MANO parameters.
 
     Args:
