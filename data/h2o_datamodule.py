@@ -166,16 +166,17 @@ class H2ODataset(Dataset):
         """
         return self.num_clips
 
-    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, int]:
-        """Get the video reader, MANO reader, and start frame for a given clip index.
+    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, np.ndarray, int]:
+        """Get the video reader, MANO reader, camera intrinsics and start frame for a given clip index.
 
         Args:
             clip_idx (int): The index of the clip in the dataset.
 
         Returns:
-            tuple[VideoReader, ManoReader, int]: A tuple containing:
+            tuple[VideoReader, ManoReader, np.ndarray, int]: A tuple containing:
                 - The VideoReader instance for the clip.
                 - The ManoReader instance for the clip.
+                - The camera intrinsic matrix with shape (3, 3).
                 - The start frame index of the clip within its video.
 
         """
@@ -233,20 +234,25 @@ class H2ODataset(Dataset):
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Retrieve a video clip as a tensor of frames and corresponding MANO parameters from the dataset.
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip and corresponding MANO parameters and camera intrinsics from the dataset.
 
-        This method loads frames and MANO parameters from a single video clip specified by the index.
+        This method loads frames, MANO parameters for both hands, and camera intrinsics from a single video clip
+        specified by the index.
 
         Args:
             idx (int): The index of the video clip to retrieve.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
-                  C is the number of channels, H is the height, and W is the width.
-                - A tensor of MANO parameters with shape (T, M), where T is the number of frames
-                  and M is the number of MANO parameters.
+                  C is the number of channels, H is the height, and W is the width. Values are normalized
+                  with mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                - A tensor of left hand MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of right hand MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of camera intrinsic parameters with shape (3, 3).
 
         Raises:
             IndexError: If the provided index is out of range.
