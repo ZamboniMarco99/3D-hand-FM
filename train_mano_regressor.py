@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.loggers import WandbLogger
 
 from data.h2o_datamodule import H2ODataModule
-from data.transforms import VideoColorJitter, VideoRandomRotation
+from data.transforms import VideoColorJitter, VideoMirror, VideoRandomRotation
 from models.video_mano_regressor import VideoMANORegressor
 
 
@@ -26,6 +26,8 @@ def main(cfg: DictConfig) -> None:
             transforms.append(VideoColorJitter())
         if "VideoRandomRotation" in cfg.transforms:
             transforms.append(VideoRandomRotation())
+        if "VideoMirror" in cfg.transforms:
+            transforms.append(VideoMirror())
     else:
         transforms = None
 
