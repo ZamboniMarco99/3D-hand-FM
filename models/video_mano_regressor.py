@@ -349,7 +349,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         # Left hand loss
-        pose_loss_left = F.mse_loss(y_pred_left[..., :45], y_true_left[..., :45])
+        pose_loss_left = F.mse_loss(y_pred_left[..., 3:51], y_true_left[..., 3:51])
         shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
         keypoints_loss_left = F.l1_loss(pred_left_hand_joints, true_left_hand_joints)
         # keypoints_2d_loss_left = F.l1_loss(pred_keypoints_2d_left, true_keypoints_2d_left)
@@ -357,7 +357,7 @@ class VideoMANORegressor(pl.LightningModule):
         left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left
 
         # Right hand loss
-        pose_loss_right = F.mse_loss(y_pred_right[..., :45], y_true_right[..., :45])
+        pose_loss_right = F.mse_loss(y_pred_right[..., 3:51], y_true_right[..., 3:51])
         shape_loss_right = F.mse_loss(y_pred_right[..., -10:], y_true_right[..., -10:])
         keypoints_loss_right = F.l1_loss(pred_right_hand_joints, true_right_hand_joints)
         # keypoints_2d_loss_right = F.l1_loss(pred_keypoints_2d_right, true_keypoints_2d_right)
