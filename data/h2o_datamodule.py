@@ -424,6 +424,8 @@ class H2ODataModule(pl.LightningDataModule):
         num_workers: int = 8,
         crop: bool = False,
         transforms: list[nn.Module] | None = None,
+        output_size: int = 224,
+        padding_factor: float = 1.2,
     ) -> None:
         """Initialize the H2ODataModule.
 
@@ -439,6 +441,8 @@ class H2ODataModule(pl.LightningDataModule):
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
                 Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
                 tuple with transformed tensors. Defaults to None.
+            output_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+            padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
 
         """
         super().__init__()
@@ -451,6 +455,8 @@ class H2ODataModule(pl.LightningDataModule):
         self.num_workers = num_workers
         self.crop = crop
         self.transforms = transforms
+        self.output_size = output_size
+        self.padding_factor = padding_factor
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -477,6 +483,8 @@ class H2ODataModule(pl.LightningDataModule):
             crop=self.crop,
             cache=False,
             transforms=self.transforms,
+            output_size=self.output_size,
+            padding_factor=self.padding_factor,
         )
         self.val_dataset = H2ODataset(
             dataset_prefix=self.dataset_prefix,
@@ -488,6 +496,8 @@ class H2ODataModule(pl.LightningDataModule):
             crop=self.crop,
             cache=False,
             transforms=None,
+            output_size=self.output_size,
+            padding_factor=self.padding_factor,
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")
