@@ -101,6 +101,55 @@ class VideoReader:
         """
         return self.video_len
 
+    def get_frames(self, frame_idxs: list[int]) -> list[np.ndarray]:
+        """Retrieve multiple frames from the video.
+
+        Args:
+            frame_idxs (list[int]): List of frame indices to read.
+
+        Returns:
+            list[np.ndarray]: List of images as NumPy arrays.
+
+        """
+        frames = []
+        for frame_idx in frame_idxs:
+            frame_fn = self.fmt_frame_fn(frame_idx)
+            img_path = Path(self.frame_dir_path) / frame_fn
+            img = cv2.imread(str(img_path))
+            img = img[:, :, ::-1]
+            if self.max_width is not None or self.max_height is not None:
+                img_pil = Image.fromarray(img)
+                if self.crop:
+                    # Calculate the aspect ratios
+                    aspect_ratio_img = img_pil.width / img_pil.height
+                    aspect_ratio_target = self.max_width / self.max_height
+
+                    # Resize based on the target aspect ratio
+                    if aspect_ratio_img > aspect_ratio_target:
+                        # Image is wider than the target aspect ratio
+                        new_height = self.max_height
+                        new_width = int(new_height * aspect_ratio_img)
+                    else:
+                        # Image is taller than the target aspect ratio
+                        new_width = self.max_width
+                        new_height = int(new_width / aspect_ratio_img)
+
+                    # Resize the image
+                    img_pil = img_pil.resize((new_width, new_height))
+
+                    # Crop the image to the target dimensions
+                    left = (new_width - self.max_width) / 2
+                    top = (new_height - self.max_height) / 2
+                    right = (new_width + self.max_width) / 2
+                    bottom = (new_height + self.max_height) / 2
+
+                    img_pil = img_pil.crop((left, top, right, bottom))
+                else:
+                    img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
+                img = np.array(img_pil)
+            frames.append(img)
+        return frames
+
     def get_frame(self, frame: int) -> np.ndarray:
         """Retrieve a single frame from the video.
 
@@ -111,41 +160,7 @@ class VideoReader:
             np.ndarray: The frame as a NumPy array.
 
         """
-        frame_fn = self.fmt_frame_fn(frame)
-        img_path = Path(self.frame_dir_path) / frame_fn
-        img = cv2.imread(str(img_path))
-        img = img[:, :, ::-1]
-        if self.max_width is not None or self.max_height is not None:
-            img_pil = Image.fromarray(img)
-            if self.crop:
-                # Calculate the aspect ratios
-                aspect_ratio_img = img_pil.width / img_pil.height
-                aspect_ratio_target = self.max_width / self.max_height
-
-                # Resize based on the target aspect ratio
-                if aspect_ratio_img > aspect_ratio_target:
-                    # Image is wider than the target aspect ratio
-                    new_height = self.max_height
-                    new_width = int(new_height * aspect_ratio_img)
-                else:
-                    # Image is taller than the target aspect ratio
-                    new_width = self.max_width
-                    new_height = int(new_width / aspect_ratio_img)
-
-                # Resize the image
-                img_pil = img_pil.resize((new_width, new_height))
-
-                # Crop the image to the target dimensions
-                left = (new_width - self.max_width) / 2
-                top = (new_height - self.max_height) / 2
-                right = (new_width + self.max_width) / 2
-                bottom = (new_height + self.max_height) / 2
-
-                img_pil = img_pil.crop((left, top, right, bottom))
-            else:
-                img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
-            img = np.array(img_pil)
-        return img
+        return self.get_frames([frame])[0]
 
     def __getitem__(self, idx: int) -> np.ndarray:
         """Retrieve a single frame from the video.
