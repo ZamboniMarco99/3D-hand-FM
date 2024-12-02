@@ -35,7 +35,9 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as F  # noqa: N812
 
+from data.bbox_reader import BboxReader
 from data.mano_reader import ManoReader
+from data.transforms import CropHand
 from data.video_reader import VideoReader
 
 
@@ -50,9 +52,11 @@ class H2ODataset(Dataset):
     Attributes:
         video_readers (list): A list of VideoReader instances, one for each video in the dataset.
         mano_readers (list): A list of ManoReader instances, one for each MANO sequence in the dataset.
+        bbox_readers (list): A list of BboxReader instances, one for each Bbox sequence in the dataset.
+        camera_intrinsics (list): A list of camera intrinsic matrices, one for each camera in the dataset.
         num_frames (int | None): The number of frames to include per video clip. If None, all frames are included.
         num_clips (int): The total number of clips in the dataset.
-        clip_to_data (dict): Maps clip indices to corresponding video reader, MANO reader, and start frame.
+        clip_to_data (dict): Maps clip indices to corresponding video reader, MANO reader, bbox reader, and start frame.
 
     Args:
         dataset_prefix (str): The root directory path of the dataset.
@@ -79,6 +83,8 @@ class H2ODataset(Dataset):
         crop: bool = False,
         cache: bool = True,
         transforms: list[nn.Module] | None = None,
+        output_size: int = 224,
+        padding_factor: float = 1.2,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -94,6 +100,8 @@ class H2ODataset(Dataset):
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply. Each transform
                 should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same tuple
                 with transformed tensors. Defaults to None.
+            output_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+            padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
 
         The dataset is constructed by creating VideoReader and ManoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
@@ -104,6 +112,7 @@ class H2ODataset(Dataset):
         """
         self.video_readers = []
         self.mano_readers = []
+        self.bbox_readers = []
         self.camera_intrinsics = []
         self.num_clips = 0
         self.num_frames = num_frames
@@ -111,6 +120,7 @@ class H2ODataset(Dataset):
         self.transforms = transforms
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
+        self.crop_transform = CropHand(output_size=output_size, padding_factor=padding_factor)
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
@@ -154,9 +164,18 @@ class H2ODataset(Dataset):
                         ),
                     )
 
+                    bbox_dir_path = Path(scene_path) / directory / camera / "hand_bbox"
+                    self.bbox_readers.append(
+                        BboxReader(
+                            bbox_dir_path=bbox_dir_path,
+                            fmt_frame_fn=lambda x: f"{x:06d}.txt",
+                        ),
+                    )
+
                     self.clip_to_data[self.num_clips] = (
                         self.video_readers[-1],
                         self.mano_readers[-1],
+                        self.bbox_readers[-1],
                         self.camera_intrinsics[-1],
                     )
                     self.num_clips += len(self.video_readers[-1]) // self.num_frames
@@ -170,30 +189,33 @@ class H2ODataset(Dataset):
         """
         return self.num_clips
 
-    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, np.ndarray, int]:
-        """Get the video reader, MANO reader, camera intrinsics and start frame for a given clip index.
+    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, BboxReader, np.ndarray, int]:
+        """Get the video reader, MANO reader, bbox reader, camera intrinsics and start frame for a given clip index.
 
         Args:
             clip_idx (int): The index of the clip in the dataset.
 
         Returns:
-            tuple[VideoReader, ManoReader, np.ndarray, int]: A tuple containing:
+            tuple[VideoReader, ManoReader, BboxReader, np.ndarray, int]: A tuple containing:
                 - The VideoReader instance for the clip.
                 - The ManoReader instance for the clip.
+                - The BboxReader instance for the clip.
                 - The camera intrinsic matrix with shape (3, 3).
                 - The start frame index of the clip within its video.
 
         """
-        # Find the corresponding video and MANO readers
-        video_idx, video_reader, mano_reader, intrinsics = max(
-            (i, video, mano, intrinsics) for i, (video, mano, intrinsics) in self.clip_to_data.items() if i <= clip_idx
+        # Find the corresponding readers
+        video_idx, video_reader, mano_reader, bbox_reader, intrinsics = max(
+            (i, video, mano, bbox, intrinsics)
+            for i, (video, mano, bbox, intrinsics) in self.clip_to_data.items()
+            if i <= clip_idx
         )
 
         # Calculate the start frame of the clip within the video
         clip_idx_in_video = clip_idx - video_idx
         start_frame = self.num_frames * clip_idx_in_video
 
-        return video_reader, mano_reader, intrinsics, start_frame
+        return video_reader, mano_reader, bbox_reader, intrinsics, start_frame
 
     @staticmethod
     @cache
@@ -238,11 +260,33 @@ class H2ODataset(Dataset):
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
 
+    @staticmethod
+    @cache
+    def _get_bbox_data(
+        bbox_reader: BboxReader,
+        start_frame: int,
+        num_frames: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Get bounding box data from the bbox reader for a given clip.
+
+        Args:
+            bbox_reader (BboxReader): The bbox reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains bbox coordinates for the left hand for each frame.
+                - The second list contains bbox coordinates for the right hand for each frame.
+
+        """
+        return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames)))
+
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Retrieve a video clip and corresponding MANO parameters and camera intrinsics from the dataset.
 
         This method loads frames, MANO parameters for both hands, and camera intrinsics from a single video clip
-        specified by the index.
+        specified by the index. The frames are cropped around the hand based on bounding box data.
 
         Args:
             idx (int): The index of the video clip to retrieve.
@@ -250,8 +294,8 @@ class H2ODataset(Dataset):
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
-                  C is the number of channels, H is the height, and W is the width. Values are normalized
-                  with mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                  C is the number of channels (3), and H=W=output_size. Values are normalized with
+                  mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
                 - A tensor of left hand MANO parameters with shape (T, 61), where T is the number of frames.
                   Contains translation (3), pose (45) and shape (10) parameters.
                 - A tensor of right hand MANO parameters with shape (T, 61), where T is the number of frames.
@@ -266,11 +310,12 @@ class H2ODataset(Dataset):
             msg = f"Index {idx} out of range. Total clips: {len(self)}"
             raise IndexError(msg)
 
-        video_reader, mano_reader, intrinsics, start_frame = self._get_clip_data(idx)
+        video_reader, mano_reader, bbox_reader, intrinsics, start_frame = self._get_clip_data(idx)
 
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
             mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames)
+            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames)
             mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
@@ -278,19 +323,40 @@ class H2ODataset(Dataset):
                 start_frame,
                 self.num_frames,
             )
+            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(
+                bbox_reader,
+                start_frame,
+                self.num_frames,
+            )
 
         # Convert list of numpy arrays to PyTorch tensors
-        clip = F.normalize(torch.from_numpy(np.stack(frames)), mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        clip = torch.from_numpy(np.stack(frames))
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
-
+        bbox_left = torch.from_numpy(np.stack(bbox_left))
         intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
+        # Apply CropHand transform for left hand only
+        clip_left, mano_left, intrinsics_left = self.crop_transform(
+            clip,
+            mano_left,
+            bbox_left,
+            intrinsics,
+        )
+
+        # Apply additional transforms if provided
         if self.transforms is not None:
             for transform in self.transforms:
-                clip, mano_left, mano_right, intrinsics = transform(clip, mano_left, mano_right, intrinsics)
+                clip_left, mano_left, mano_right, intrinsics_left = transform(
+                    clip_left,
+                    mano_left,
+                    mano_right,
+                    intrinsics_left,
+                )
+        # Normalize the cropped clip
+        clip_left = F.normalize(clip_left, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip, mano_left, mano_right, intrinsics
+        return clip_left, mano_left, mano_right, intrinsics_left
 
 
 class H2ODataModule(pl.LightningDataModule):
