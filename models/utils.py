@@ -166,12 +166,23 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     Credit:
 
     Args:
-        s1 (torch.Tensor): First set of points of shape (B, N, 3).
-        s2 (torch.Tensor): Second set of points of shape (B, N, 3).
+        s1 (torch.Tensor): First set of points of shape (B, T, N, 3).
+        s2 (torch.Tensor): Second set of points of shape (B, T, N, 3).
 
     Returns:
-        (np.array): Reconstruction error.
+        (torch.Tensor): Reconstruction error.
 
     """
-    s1_hat = compute_similarity_transform(s1, s2)
-    return torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-1)
+    # Reshape to (B*T, N, 3) for compute_similarity_transform
+    batch_size, num_frames = s1.shape[:2]
+    s1_reshaped = s1.reshape(-1, *s1.shape[2:])
+    s2_reshaped = s2.reshape(-1, *s2.shape[2:])
+
+    s1_hat = compute_similarity_transform(s1_reshaped, s2_reshaped)
+
+    # Reshape back to (B, T, N, 3)
+    s1_hat = s1_hat.reshape(batch_size, num_frames, *s1_hat.shape[1:])
+    # First calculate mean per clip independently
+    clip_means = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-2)
+    # Then take mean across all clips
+    return clip_means.mean(dim=-1)
