@@ -29,8 +29,6 @@ class VideoReader:
     Attributes:
         video_path (str): Path to the video file.
         frame_dir_path (str | None): Path to directory containing video frames.
-        max_width (int | None): Maximum width for resizing frames.
-        max_height (int | None): Maximum height for resizing frames.
         fmt_frame_fn (Callable[[int], str] | None): Function to transform frame indexes into filenames.
         fps (float): Actual frames per second of the video.
         video_len (int): Total number of frames in the video.
@@ -43,21 +41,15 @@ class VideoReader:
         self,
         video_path: str,
         frame_dir_path: str | None = None,
-        max_width: int | None = None,
-        max_height: int | None = None,
         fmt_frame_fn: Callable[[int], str] | None = None,
-        crop: bool = False,
     ) -> None:
         """Initialize the VideoReader.
 
         Args:
             video_path (str): Path to the video file.
             frame_dir_path (str | None, optional): Path to directory containing video frames. Defaults to None.
-            max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
-            max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             fmt_frame_fn (Callable[[int], str] | None, optional): Function to transform frame indexes into filenames.
                 If provided, it should take an integer frame index and return a string filename. Defaults to None.
-            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
 
         Raises:
             ValueError: If video_path is None and frame_dir_path is not provided
@@ -68,10 +60,7 @@ class VideoReader:
         self.frame_dir_path = (
             frame_dir_path if frame_dir_path not in ["", None] and Path(frame_dir_path).is_dir() else None
         )
-        self.max_width = max_width
-        self.max_height = max_height
         self.fmt_frame_fn = fmt_frame_fn
-        self.crop = crop
 
         if video_path is not None:
             video_cap = cv2.VideoCapture(video_path)
@@ -117,36 +106,6 @@ class VideoReader:
             img_path = Path(self.frame_dir_path) / frame_fn
             img = cv2.imread(str(img_path))
             img = img[:, :, ::-1]
-            if self.max_width is not None or self.max_height is not None:
-                img_pil = Image.fromarray(img)
-                if self.crop:
-                    # Calculate the aspect ratios
-                    aspect_ratio_img = img_pil.width / img_pil.height
-                    aspect_ratio_target = self.max_width / self.max_height
-
-                    # Resize based on the target aspect ratio
-                    if aspect_ratio_img > aspect_ratio_target:
-                        # Image is wider than the target aspect ratio
-                        new_height = self.max_height
-                        new_width = int(new_height * aspect_ratio_img)
-                    else:
-                        # Image is taller than the target aspect ratio
-                        new_width = self.max_width
-                        new_height = int(new_width / aspect_ratio_img)
-
-                    # Resize the image
-                    img_pil = img_pil.resize((new_width, new_height))
-
-                    # Crop the image to the target dimensions
-                    left = (new_width - self.max_width) / 2
-                    top = (new_height - self.max_height) / 2
-                    right = (new_width + self.max_width) / 2
-                    bottom = (new_height + self.max_height) / 2
-
-                    img_pil = img_pil.crop((left, top, right, bottom))
-                else:
-                    img_pil.thumbnail((self.max_width or 1e8, self.max_height or 1e8))
-                img = np.array(img_pil)
             frames.append(img)
         return frames
 
