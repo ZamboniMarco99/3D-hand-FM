@@ -302,3 +302,176 @@ class VideoMirror(nn.Module):
             video = video.squeeze(0)
 
         return video, mano_left, mano_right, intrinsic_matrix
+
+
+class CropHand:
+    """Transform to crop hand from video frames based on bounding box coordinates."""
+
+    def __init__(self, output_size: int = 224, padding_factor: float = 1.2) -> None:
+        """Initialize the CropHand transform.
+
+        Args:
+            output_size (int): Size of the output square crop in pixels
+            padding_factor (float): Factor to increase the crop size by. For example,
+                1.2 means the crop will be 20% larger than the tight bounding box.
+
+        """
+        self.output_size = output_size
+        self.padding_factor = padding_factor
+
+    def process_bbox(self, bbox: Tensor, h: int, w: int) -> tuple[int, int, int, int]:
+        """Process a bounding box to generate square crop coordinates.
+
+        This function takes a bounding box and:
+        1. Calculates the center point of the box
+        2. Determines the largest dimension (width or height) to make a square crop
+        3. Applies padding factor to increase crop size
+        4. Adjusts crop coordinates if they exceed image boundaries while maintaining square shape
+
+        Args:
+            bbox (Tensor): Bounding box coordinates [x_min, y_min, x_max, y_max]
+            h (int): Height of the image
+            w (int): Width of the image
+
+        Returns:
+            tuple[int, int, int, int]: Adjusted crop coordinates (x_min, y_min, x_max, y_max)
+            that define a square region within image bounds
+
+        """
+        x_min, y_min, x_max, y_max = bbox
+
+        # Calculate center and size
+        center_x = (x_min + x_max) / 2
+        center_y = (y_min + y_max) / 2
+        width = x_max - x_min
+        height = y_max - y_min
+
+        # Use larger dimension for square crop and apply padding
+        size = max(width, height) * self.padding_factor
+        half_size = size / 2
+
+        # Initial crop coordinates centered on the hand
+        crop_x_min = int(center_x - half_size)
+        crop_y_min = int(center_y - half_size)
+        crop_x_max = int(center_x + half_size)
+        crop_y_max = int(center_y + half_size)
+
+        # Adjust coordinates if they exceed image bounds
+        # If crop goes beyond left edge
+        if crop_x_min < 0:
+            crop_x_max -= crop_x_min  # Shift right while maintaining size
+            crop_x_min = 0
+        # If crop goes beyond top edge
+        if crop_y_min < 0:
+            crop_y_max -= crop_y_min  # Shift down while maintaining size
+            crop_y_min = 0
+        # If crop goes beyond right edge
+        if crop_x_max > w:
+            crop_x_min -= crop_x_max - w  # Shift left while maintaining size
+            crop_x_max = w
+        # If crop goes beyond bottom edge
+        if crop_y_max > h:
+            crop_y_min -= crop_y_max - h  # Shift up while maintaining size
+            crop_y_max = h
+
+        return crop_x_min, crop_y_min, crop_x_max, crop_y_max
+
+    def __call__(
+        self,
+        video: Tensor,
+        mano_params: Tensor,
+        bbox: Tensor,  # Shape: (B, T, 4) for [x_min, y_min, x_max, y_max]
+        intrinsic_matrix: Tensor,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Apply hand cropping transform.
+
+        Args:
+            video (Tensor): Video tensor of shape (T, C, H, W) or (B, T, C, H, W)
+            mano_params (Tensor): MANO parameters of shape (T, 61) or (B, T, 61)
+            bbox (Tensor): Hand bounding boxes for each frame
+            intrinsic_matrix (Tensor): Camera intrinsic matrix of shape (3, 3) or (B, 3, 3)
+
+        Returns:
+            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, shifted MANO parameters,
+                and updated intrinsic matrix
+
+        """
+        # Handle both batched and unbatched inputs
+        need_squeeze = False
+        if video.dim() == 4:  # noqa: PLR2004
+            video = video.unsqueeze(0)
+            mano_params = mano_params.unsqueeze(0)
+            bbox = bbox.unsqueeze(0)
+            intrinsic_matrix = intrinsic_matrix.unsqueeze(0)
+            need_squeeze = True
+
+        # Get dimensions
+        b, t, c, h, w = video.shape
+
+        # Initialize output tensors for each batch
+        video_crops = []
+        mano_params_shifted = mano_params.clone()
+        intrinsic_matrices = []
+
+        # Process each batch independently
+        for batch_idx in range(b):
+            batch_crops = []
+            batch_intrinsics = []
+
+            # Process each frame in the batch
+            for time_idx in range(t):
+                # Get crop for current frame
+                crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
+                crop_size = crop[2] - crop[0]  # Square crop so width = height
+                scale_factor = self.output_size / crop_size
+
+                # Crop and resize the current frame
+                frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
+                frame_resized = torch.nn.functional.interpolate(
+                    frame_crop.unsqueeze(0),
+                    size=(self.output_size, self.output_size),
+                    mode="bilinear",
+                    align_corners=False,
+                ).squeeze(0)
+                batch_crops.append(frame_resized)
+
+                # Shift and scale MANO translation parameters to new coordinate system
+                # MANO uses first 3 parameters for translation (x,y,z)
+                mano_params_shifted[batch_idx, time_idx, 0] = (
+                    mano_params_shifted[batch_idx, time_idx, 0] - crop[0]
+                ) * scale_factor
+                mano_params_shifted[batch_idx, time_idx, 1] = (
+                    mano_params_shifted[batch_idx, time_idx, 1] - crop[1]
+                ) * scale_factor
+                mano_params_shifted[batch_idx, time_idx, 2] = (
+                    mano_params_shifted[batch_idx, time_idx, 2] * scale_factor
+                )  # Scale z coordinate
+
+                # Create copy for current frame
+                intrinsic_t = intrinsic_matrix[batch_idx].clone()
+
+                # Adjust principal point for crop and scaling
+                intrinsic_t[0, 2] = (intrinsic_t[0, 2] - crop[0]) * scale_factor
+                intrinsic_t[1, 2] = (intrinsic_t[1, 2] - crop[1]) * scale_factor
+
+                # Scale focal length
+                intrinsic_t[0, 0] *= scale_factor
+                intrinsic_t[1, 1] *= scale_factor
+
+                batch_intrinsics.append(intrinsic_t)
+
+            # Stack frames for current batch
+            video_crops.append(torch.stack(batch_crops))
+            intrinsic_matrices.append(torch.stack(batch_intrinsics))
+
+        # Stack all batches
+        video_cropped = torch.stack(video_crops)  # (B, T, C, output_size, output_size)
+
+        if need_squeeze:
+            video_cropped = video_cropped.squeeze(0)
+            mano_params_shifted = mano_params_shifted.squeeze(0)
+            intrinsic_matrices = intrinsic_matrices[0]
+        else:
+            intrinsic_matrices = torch.stack(intrinsic_matrices)  # (B, T, 3, 3)
+
+        return video_cropped, mano_params_shifted, intrinsic_matrices
