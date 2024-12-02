@@ -122,10 +122,7 @@ class H2ODataset(Dataset):
                         VideoReader(
                             video_path=None,
                             frame_dir_path=frame_dir_path,
-                            max_width=max_width,
-                            max_height=max_height,
                             fmt_frame_fn=lambda x: f"{x:06d}.png",
-                            crop=crop,
                         ),
                     )
 
