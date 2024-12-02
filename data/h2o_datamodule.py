@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from torch import nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as F  # noqa: N812
 
@@ -77,6 +78,7 @@ class H2ODataset(Dataset):
         num_frames: int | None = None,
         crop: bool = False,
         cache: bool = True,
+        transforms: list[nn.Module] | None = None,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -89,11 +91,15 @@ class H2ODataset(Dataset):
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
             crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
+            transforms (list[nn.Module] | None, optional): List of video transform modules to apply. Each transform
+                should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same tuple
+                with transformed tensors. Defaults to None.
 
         The dataset is constructed by creating VideoReader and ManoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
         If crop is True, videos will be cropped to the exact max_width and max_height sizes.
         If cache is True, data will be cached in memory for faster access.
+        If transforms is provided, the transforms will be applied sequentially to the video and parameters.
 
         """
         self.video_readers = []
@@ -102,6 +108,7 @@ class H2ODataset(Dataset):
         self.num_clips = 0
         self.num_frames = num_frames
         self.cache = cache
+        self.transforms = transforms
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
 
@@ -166,16 +173,17 @@ class H2ODataset(Dataset):
         """
         return self.num_clips
 
-    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, int]:
-        """Get the video reader, MANO reader, and start frame for a given clip index.
+    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, np.ndarray, int]:
+        """Get the video reader, MANO reader, camera intrinsics and start frame for a given clip index.
 
         Args:
             clip_idx (int): The index of the clip in the dataset.
 
         Returns:
-            tuple[VideoReader, ManoReader, int]: A tuple containing:
+            tuple[VideoReader, ManoReader, np.ndarray, int]: A tuple containing:
                 - The VideoReader instance for the clip.
                 - The ManoReader instance for the clip.
+                - The camera intrinsic matrix with shape (3, 3).
                 - The start frame index of the clip within its video.
 
         """
@@ -233,20 +241,25 @@ class H2ODataset(Dataset):
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Retrieve a video clip as a tensor of frames and corresponding MANO parameters from the dataset.
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip and corresponding MANO parameters and camera intrinsics from the dataset.
 
-        This method loads frames and MANO parameters from a single video clip specified by the index.
+        This method loads frames, MANO parameters for both hands, and camera intrinsics from a single video clip
+        specified by the index.
 
         Args:
             idx (int): The index of the video clip to retrieve.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
-                  C is the number of channels, H is the height, and W is the width.
-                - A tensor of MANO parameters with shape (T, M), where T is the number of frames
-                  and M is the number of MANO parameters.
+                  C is the number of channels, H is the height, and W is the width. Values are normalized
+                  with mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                - A tensor of left hand MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of right hand MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of camera intrinsic parameters with shape (3, 3).
 
         Raises:
             IndexError: If the provided index is out of range.
@@ -274,7 +287,13 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
 
-        return clip, mano_left, mano_right, torch.from_numpy(intrinsics)
+        intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
+
+        if self.transforms is not None:
+            for transform in self.transforms:
+                clip, mano_left, mano_right, intrinsics = transform(clip, mano_left, mano_right, intrinsics)
+
+        return clip, mano_left, mano_right, intrinsics
 
 
 class H2ODataModule(pl.LightningDataModule):
@@ -341,6 +360,7 @@ class H2ODataModule(pl.LightningDataModule):
         num_frames: int = 300,
         num_workers: int = 8,
         crop: bool = False,
+        transforms: list[nn.Module] | None = None,
     ) -> None:
         """Initialize the H2ODataModule.
 
@@ -353,6 +373,9 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames (int, optional): Number of frames to include per video. Defaults to 300.
             num_workers (int, optional): Number of worker processes for data loading. Defaults to 8.
             crop (bool, optional): Whether to crop the frames to exact max_width and max_height. Defaults to False.
+            transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
+                Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
+                tuple with transformed tensors. Defaults to None.
 
         """
         super().__init__()
@@ -364,6 +387,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.num_frames = num_frames
         self.num_workers = num_workers
         self.crop = crop
+        self.transforms = transforms
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -389,6 +413,7 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames=self.num_frames,
             crop=self.crop,
             cache=False,
+            transforms=self.transforms,
         )
         self.val_dataset = H2ODataset(
             dataset_prefix=self.dataset_prefix,
@@ -399,6 +424,7 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames=self.num_frames,
             crop=self.crop,
             cache=False,
+            transforms=None,
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")

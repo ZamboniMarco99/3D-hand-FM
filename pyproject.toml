@@ -37,7 +37,16 @@ select = ["ALL"]
 # Avoid enforcing docstrings in __init__.py
 # Permit f-strings in logging
 # Permit boolean types in functions
-ignore = ["T201", "D401", "PLR0913", "D104", "G004", "FBT001", "FBT002"]
+ignore = [
+    "T201",  # Avoid enforcing print rule
+    "D401",  # Avoid enforcing imperative docstrings
+    "PLR0913",  # Avoid enforcing too many arguments
+    "D104",  # Avoid enforcing docstrings in __init__.py
+    "G004",  # Permit f-strings in logging
+    "FBT001",  # Permit boolean types in functions
+    "FBT002",  # Permit boolean types in functions
+    "S311",  # Permit non cryptographic random
+]
 
 [tool.ruff]
 line-length = 120
