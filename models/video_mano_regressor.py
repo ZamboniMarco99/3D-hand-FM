@@ -20,7 +20,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints, project_joints_to_2d
+from models.utils import get_mano_joints, project_joints_to_2d, reconstruction_error
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -429,6 +429,9 @@ class VideoMANORegressor(pl.LightningModule):
         left_mae = F.l1_loss(y_pred_left, y_left)
         right_mae = F.l1_loss(y_pred_right, y_right)
 
+        left_pamje = reconstruction_error(pred_left_hand_joints, true_left_hand_joints)
+        right_pamje = reconstruction_error(pred_right_hand_joints, true_right_hand_joints)
+
         self.log("train/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("train/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -442,6 +445,8 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("train/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_left_pamje", left_pamje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_right_pamje", right_pamje, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -505,6 +510,9 @@ class VideoMANORegressor(pl.LightningModule):
         left_mae = F.l1_loss(y_pred_left, y_left)
         right_mae = F.l1_loss(y_pred_right, y_right)
 
+        left_pamje = reconstruction_error(pred_left_hand_joints, true_left_hand_joints)
+        right_pamje = reconstruction_error(pred_right_hand_joints, true_right_hand_joints)
+
         self.log("val/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -518,6 +526,8 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("val/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_left_pamje", left_pamje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_right_pamje", right_pamje, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.
