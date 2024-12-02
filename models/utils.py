@@ -183,6 +183,6 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     # Reshape back to (B, T, N, 3)
     s1_hat = s1_hat.reshape(batch_size, num_frames, *s1_hat.shape[1:])
     # First calculate mean per clip independently
-    clip_means = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-2)
+    clip_means = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-1)
     # Then take mean across all clips
-    return clip_means.mean(dim=-1)
+    return clip_means.mean()
