@@ -433,7 +433,7 @@ class CropHand:
 
                 # Crop and resize frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
-                frame_resized = F.interpolate(
+                frame_resized = torch.nn.functional.interpolate(
                     frame_crop.unsqueeze(0),
                     size=(self.output_size, self.output_size),
                     mode="bilinear",
