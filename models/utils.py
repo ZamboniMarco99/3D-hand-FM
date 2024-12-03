@@ -10,6 +10,41 @@ from manopth.manolayer import ManoLayer
 
 
 def get_mano_joints(
+    mano_params: torch.Tensor,
+    mano: ManoLayer,
+) -> torch.Tensor:
+    """Execute the MANO model to generate hand joints.
+
+    Args:
+        mano_params (torch.Tensor): Tensor containing MANO parameters for the hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
+        mano (ManoLayer): MANO model for the hand.
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size, num_joints, 3) of hand joints
+
+    """
+    # Get the device of mano_params
+    batch_size = mano_params.shape[0]
+    num_frames = mano_params.shape[1]
+
+    # Push the time dimension in the batch dimension
+    params = mano_params.view(-1, mano_params.shape[2])
+
+    # Process hand
+    _, hand_joints = mano(
+        params[:, 3:51],  # pose
+        params[:, 51:],  # shape
+        params[:, :3],  # translation
+    )
+
+    # Reshape the joints to match the original batch size and time dimension
+    hand_joints = hand_joints.view(batch_size, num_frames, -1, 3)
+
+    return hand_joints
+
+
+def get_mano_joints_both_hands(
     mano_params_left: torch.Tensor,
     mano_params_right: torch.Tensor,
     mano_left: ManoLayer,
