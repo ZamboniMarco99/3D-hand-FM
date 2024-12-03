@@ -305,7 +305,7 @@ class VideoMirror(nn.Module):
 
 
 class CropHand:
-    """Transform to crop hand from video frames based on bounding box coordinates."""
+    """Transform to crop hand from video frames and adjust MANO parameters to the new view."""
 
     def __init__(self, output_size: int = 224, padding_factor: float = 1.2) -> None:
         """Initialize the CropHand transform.
@@ -383,23 +383,23 @@ class CropHand:
         bbox: Tensor,
         intrinsic_matrix: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """Apply hand cropping transform.
+        """Apply hand cropping transform and adjust coordinate systems.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (B, T, C, H, W)
             mano_params (Tensor): MANO parameters of shape (T, 61) or (B, T, 61)
-                in camera coordinate system (millimeters)
+                in global coordinate system (millimeters)
             bbox (Tensor): Hand bounding boxes for each frame
             intrinsic_matrix (Tensor): Camera intrinsic matrix of shape (3, 3) or (B, 3, 3)
 
         Returns:
-            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, unchanged MANO parameters,
-                and updated intrinsic matrix
+            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, updated MANO parameters,
+                and updated intrinsic matrix for the new view
 
         """
         # Handle both batched and unbatched inputs
         need_squeeze = False
-        if video.dim() == 4:  # noqa: PLR2004
+        if video.dim() == 4:
             video = video.unsqueeze(0)
             mano_params = mano_params.unsqueeze(0)
             bbox = bbox.unsqueeze(0)
@@ -409,29 +409,31 @@ class CropHand:
         # Get dimensions
         b, t, c, h, w = video.shape
 
-        # Initialize output tensors for each batch
+        # Initialize output tensors
         video_crops = []
+        mano_params_updated = []
         intrinsic_matrices = []
 
         # Process each batch independently
         for batch_idx in range(b):
             batch_crops = []
+            batch_mano = []
             batch_intrinsics = []
 
             # Process each frame in the batch
             for time_idx in range(t):
-                # Get crop for current frame
+                # Get crop coordinates
                 crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
-                crop_h = crop[3] - crop[1]  # Height of crop
-                crop_w = crop[2] - crop[0]  # Width of crop
+                crop_h = crop[3] - crop[1]
+                crop_w = crop[2] - crop[0]
 
-                # Compute scale factors relative to crop size
+                # Compute scale factors
                 scale_factor_h = self.output_size / crop_h
                 scale_factor_w = self.output_size / crop_w
 
-                # Crop and resize the current frame
+                # Crop and resize frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
-                frame_resized = torch.nn.functional.interpolate(
+                frame_resized = F.interpolate(
                     frame_crop.unsqueeze(0),
                     size=(self.output_size, self.output_size),
                     mode="bilinear",
@@ -439,34 +441,48 @@ class CropHand:
                 ).squeeze(0)
                 batch_crops.append(frame_resized)
 
-                # Create copy for current frame
+                # Update MANO parameters for the new view
+                mano_t = mano_params[batch_idx, time_idx].clone()
+
+                # Adjust translation parameters for crop
+                # Convert from global to camera coordinates using original intrinsics
+                trans_global = mano_t[:3]
+                fx, fy = intrinsic_matrix[batch_idx, 0, 0], intrinsic_matrix[batch_idx, 1, 1]
+                cx, cy = intrinsic_matrix[batch_idx, 0, 2], intrinsic_matrix[batch_idx, 1, 2]
+
+                # Adjust for crop offset and scaling
+                trans_x = (trans_global[0] * fx / trans_global[2] - crop[0]) * scale_factor_w
+                trans_y = (trans_global[1] * fy / trans_global[2] - crop[1]) * scale_factor_h
+
+                # Update translation in camera coordinates
+                mano_t[0] = trans_x
+                mano_t[1] = trans_y
+                # Z coordinate remains unchanged
+                batch_mano.append(mano_t)
+
+                # Update intrinsic matrix
                 intrinsic_t = intrinsic_matrix[batch_idx].clone()
-
-                # Adjust principal point for crop and scaling
-                # Use width scaling for x-coordinate (cx)
+                # Adjust principal point
                 intrinsic_t[0, 2] = (intrinsic_t[0, 2] - crop[0]) * scale_factor_w
-                # Use height scaling for y-coordinate (cy)
                 intrinsic_t[1, 2] = (intrinsic_t[1, 2] - crop[1]) * scale_factor_h
-
-                # Scale focal lengths separately
-                intrinsic_t[0, 0] *= scale_factor_w  # fx
-                intrinsic_t[1, 1] *= scale_factor_h  # fy
-
+                # Scale focal lengths
+                intrinsic_t[0, 0] *= scale_factor_w
+                intrinsic_t[1, 1] *= scale_factor_h
                 batch_intrinsics.append(intrinsic_t)
 
-            # Stack frames for current batch
+            # Stack frames and parameters for current batch
             video_crops.append(torch.stack(batch_crops))
+            mano_params_updated.append(torch.stack(batch_mano))
             intrinsic_matrices.append(torch.stack(batch_intrinsics))
 
         # Stack all batches
-        video_cropped = torch.stack(video_crops)  # (B, T, C, output_size, output_size)
+        video_cropped = torch.stack(video_crops)
+        mano_params_cropped = torch.stack(mano_params_updated)
+        intrinsic_matrices = torch.stack(intrinsic_matrices)
 
         if need_squeeze:
             video_cropped = video_cropped.squeeze(0)
-            mano_params = mano_params.squeeze(0)
+            mano_params_cropped = mano_params_cropped.squeeze(0)
             intrinsic_matrices = intrinsic_matrices[0]
-        else:
-            intrinsic_matrices = torch.stack(intrinsic_matrices)  # (B, T, 3, 3)
 
-        # Return MANO parameters unchanged since they're in camera coordinate system
-        return video_cropped, mano_params, intrinsic_matrices
+        return video_cropped, mano_params_cropped, intrinsic_matrices
