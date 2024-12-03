@@ -417,7 +417,6 @@ class CropHand:
         for batch_idx in range(b):
             batch_crops = []
             batch_mano = []
-            batch_intrinsics = []
 
             # Process each frame in the batch
             for time_idx in range(t):
