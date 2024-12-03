@@ -37,7 +37,7 @@ from torchvision.transforms import functional as F  # noqa: N812
 
 from data.bbox_reader import BboxReader
 from data.mano_reader import ManoReader
-from data.transforms import CropHand
+from data.transforms import CropHand, VideoMirror
 from data.video_reader import VideoReader
 
 
@@ -121,6 +121,7 @@ class H2ODataset(Dataset):
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
         self.crop_transform = CropHand(output_size=output_size, padding_factor=padding_factor)
+        self.mirror_transform = VideoMirror(p=1)
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
@@ -179,7 +180,7 @@ class H2ODataset(Dataset):
             int: The number of clips in the dataset.
 
         """
-        return self.num_clips
+        return 2 * self.num_clips
 
     def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, BboxReader, np.ndarray, int]:
         """Get the video reader, MANO reader, bbox reader, camera intrinsics and start frame for a given clip index.
@@ -302,6 +303,11 @@ class H2ODataset(Dataset):
             msg = f"Index {idx} out of range. Total clips: {len(self)}"
             raise IndexError(msg)
 
+        return_right_hand = False
+        if idx >= self.num_clips:
+            idx = idx - self.num_clips
+            return_right_hand = True
+
         video_reader, mano_reader, bbox_reader, intrinsics, start_frame = self._get_clip_data(idx)
 
         if self.cache:
@@ -326,29 +332,38 @@ class H2ODataset(Dataset):
         mano_left = torch.from_numpy(np.stack(mano_params_left))
         mano_right = torch.from_numpy(np.stack(mano_params_right))
         bbox_left = torch.from_numpy(np.stack(bbox_left))
+        bbox_right = torch.from_numpy(np.stack(bbox_right))
         intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
-        # Apply CropHand transform for left hand only
-        clip_left, mano_left, intrinsics_left = self.crop_transform(
+        if return_right_hand:
+            mano_current = mano_right
+            bbox_current = bbox_right
+        else:
+            mano_current = mano_left
+            bbox_current = bbox_left
+
+        # Apply CropHand transform for the current hand only
+        clip_current, mano_current, intrinsics = self.crop_transform(
             clip,
-            mano_left,
-            bbox_left,
+            mano_current,
+            bbox_current,
             intrinsics,
         )
+        if return_right_hand:
+            clip_current, mano_current, intrinsics = self.mirror_transform(clip_current, mano_current, intrinsics)
 
         # Apply additional transforms if provided
         if self.transforms is not None:
             for transform in self.transforms:
-                clip_left, mano_left, mano_right, intrinsics_left = transform(
-                    clip_left,
-                    mano_left,
-                    mano_right,
-                    intrinsics_left,
+                clip_current, mano_current, intrinsics = transform(
+                    clip_current,
+                    mano_current,
+                    intrinsics,
                 )
         # Normalize the cropped clip
-        clip_left = F.normalize(clip_left, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip_left, mano_left, mano_right, intrinsics_left
+        return clip_current, mano_current, intrinsics
 
 
 class H2ODataModule(pl.LightningDataModule):
