@@ -422,10 +422,12 @@ class CropHand:
             for time_idx in range(t):
                 # Get crop for current frame
                 crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
+                crop_h = crop[3] - crop[1]  # Height of crop
+                crop_w = crop[2] - crop[0]  # Width of crop
 
-                # Compute separate scale factors for height and width
-                scale_factor_h = self.output_size / h
-                scale_factor_w = self.output_size / w
+                # Compute scale factors relative to crop size
+                scale_factor_h = self.output_size / crop_h
+                scale_factor_w = self.output_size / crop_w
 
                 # Crop and resize the current frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
