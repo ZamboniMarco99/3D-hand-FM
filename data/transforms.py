@@ -380,7 +380,7 @@ class CropHand:
         self,
         video: Tensor,
         mano_params: Tensor,
-        bbox: Tensor,  # Shape: (B, T, 4) for [x_min, y_min, x_max, y_max]
+        bbox: Tensor,
         intrinsic_matrix: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """Apply hand cropping transform.
@@ -388,11 +388,12 @@ class CropHand:
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (B, T, C, H, W)
             mano_params (Tensor): MANO parameters of shape (T, 61) or (B, T, 61)
+                in camera coordinate system (millimeters)
             bbox (Tensor): Hand bounding boxes for each frame
             intrinsic_matrix (Tensor): Camera intrinsic matrix of shape (3, 3) or (B, 3, 3)
 
         Returns:
-            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, shifted MANO parameters,
+            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, unchanged MANO parameters,
                 and updated intrinsic matrix
 
         """
@@ -410,7 +411,6 @@ class CropHand:
 
         # Initialize output tensors for each batch
         video_crops = []
-        mano_params_shifted = mano_params.clone()
         intrinsic_matrices = []
 
         # Process each batch independently
@@ -422,8 +422,10 @@ class CropHand:
             for time_idx in range(t):
                 # Get crop for current frame
                 crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
-                crop_size = crop[2] - crop[0]  # Square crop so width = height
-                scale_factor = self.output_size / crop_size
+
+                # Compute separate scale factors for height and width
+                scale_factor_h = self.output_size / h
+                scale_factor_w = self.output_size / w
 
                 # Crop and resize the current frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
@@ -435,28 +437,18 @@ class CropHand:
                 ).squeeze(0)
                 batch_crops.append(frame_resized)
 
-                # Shift and scale MANO translation parameters to new coordinate system
-                # MANO uses first 3 parameters for translation (x,y,z)
-                mano_params_shifted[batch_idx, time_idx, 0] = (
-                    mano_params_shifted[batch_idx, time_idx, 0] - crop[0]
-                ) * scale_factor
-                mano_params_shifted[batch_idx, time_idx, 1] = (
-                    mano_params_shifted[batch_idx, time_idx, 1] - crop[1]
-                ) * scale_factor
-                mano_params_shifted[batch_idx, time_idx, 2] = (
-                    mano_params_shifted[batch_idx, time_idx, 2] * scale_factor
-                )  # Scale z coordinate
-
                 # Create copy for current frame
                 intrinsic_t = intrinsic_matrix[batch_idx].clone()
 
                 # Adjust principal point for crop and scaling
-                intrinsic_t[0, 2] = (intrinsic_t[0, 2] - crop[0]) * scale_factor
-                intrinsic_t[1, 2] = (intrinsic_t[1, 2] - crop[1]) * scale_factor
+                # Use width scaling for x-coordinate (cx)
+                intrinsic_t[0, 2] = (intrinsic_t[0, 2] - crop[0]) * scale_factor_w
+                # Use height scaling for y-coordinate (cy)
+                intrinsic_t[1, 2] = (intrinsic_t[1, 2] - crop[1]) * scale_factor_h
 
-                # Scale focal length
-                intrinsic_t[0, 0] *= scale_factor
-                intrinsic_t[1, 1] *= scale_factor
+                # Scale focal lengths separately
+                intrinsic_t[0, 0] *= scale_factor_w  # fx
+                intrinsic_t[1, 1] *= scale_factor_h  # fy
 
                 batch_intrinsics.append(intrinsic_t)
 
@@ -469,9 +461,10 @@ class CropHand:
 
         if need_squeeze:
             video_cropped = video_cropped.squeeze(0)
-            mano_params_shifted = mano_params_shifted.squeeze(0)
+            mano_params = mano_params.squeeze(0)
             intrinsic_matrices = intrinsic_matrices[0]
         else:
             intrinsic_matrices = torch.stack(intrinsic_matrices)  # (B, T, 3, 3)
 
-        return video_cropped, mano_params_shifted, intrinsic_matrices
+        # Return MANO parameters unchanged since they're in camera coordinate system
+        return video_cropped, mano_params, intrinsic_matrices
