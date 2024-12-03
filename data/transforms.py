@@ -71,25 +71,21 @@ class VideoColorJitter(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
+        mano: Tensor,
         intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the VideoColorJitter transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
             intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
 
         Returns:
             tuple: A tuple containing:
                 - video (Tensor): Color jittered video tensor
-                - mano_left (Tensor): Unchanged left hand MANO parameters
-                - mano_right (Tensor): Unchanged right hand MANO parameters
+                - mano (Tensor): Unchanged MANO parameters
                 - intrinsic_matrix (Tensor, optional): Unchanged camera intrinsic matrix
 
         """
@@ -118,7 +114,7 @@ class VideoColorJitter(nn.Module):
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mano, intrinsic_matrix
 
 
 class VideoRandomRotation(nn.Module):
@@ -142,25 +138,21 @@ class VideoRandomRotation(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
+        mano: Tensor,
         intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the RandomRotation transform.
 
         Args:
             video (Tensor): Video tensor of shape (T,C,H,W) or (N,T,C,H,W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
             intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
 
         Returns:
             tuple: A tuple containing:
                 - video (Tensor): Rotated video tensor
-                - mano_left (Tensor): Rotated left hand MANO parameters
-                - mano_right (Tensor): Rotated right hand MANO parameters
+                - mano (Tensor): Rotated MANO parameters
                 - intrinsic_matrix (Tensor, optional): Transformed camera intrinsic matrix
 
         """
@@ -228,7 +220,7 @@ class VideoRandomRotation(nn.Module):
                 torch.matmul(rot_mat, torch.matmul(translate_to_origin, intrinsic_matrix)),
             )
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mano, intrinsic_matrix
 
 
 class VideoMirror(nn.Module):
@@ -252,30 +244,26 @@ class VideoMirror(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
+        mano: Tensor,
         intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the VideoMirror transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
             intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
 
         Returns:
-            tuple[Tensor, Tensor, Tensor, Tensor | None]: Tuple containing:
+            tuple[Tensor, Tensor, Tensor | None]: Tuple containing:
                 - Mirrored video tensor
-                - Updated left hand MANO parameters
-                - Updated right hand MANO parameters
+                - Updated MANO parameters
                 - Updated camera intrinsic matrix (if provided)
 
         """
         if random.random() > self.p:
-            return video, mano_left, mano_right, intrinsic_matrix
+            return video, mano, intrinsic_matrix
 
         # Handle both batched and unbatched videos
         need_squeeze = False
@@ -286,22 +274,18 @@ class VideoMirror(nn.Module):
         # Mirror the video frames
         video = torch.flip(video, dims=[-1])
 
-        # Swap left and right hand parameters
-        mano_left, mano_right = mano_right.clone(), mano_left.clone()
-
         # Mirror the translation parameters (x coordinate)
-        mano_left[..., 0] *= -1
-        mano_right[..., 0] *= -1
+        mano[..., 0] *= -1
 
         # Mirror relevant pose parameters
-        # For both hands: negate parameters controlling left-right rotation
-        mano_left[..., 4:51:3] *= -1
-        mano_right[..., 5:51:3] *= -1
+        # Negate parameters controlling left-right rotation
+        mano[..., 4:51:3] *= -1
+        mano[..., 5:51:3] *= -1
 
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mano, intrinsic_matrix
 
 
 class CropHand:
