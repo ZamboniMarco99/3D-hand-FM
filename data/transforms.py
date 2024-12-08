@@ -274,12 +274,13 @@ class VideoMirror(nn.Module):
         video = torch.flip(video, dims=[-1])
 
         # Mirror the translation parameters (x coordinate)
-        mano[..., 0] *= -1
+        mirrored_mano = mano.clone()
+        mirrored_mano[..., 0] *= -1
 
         # Mirror relevant pose parameters
-        #  # Negate x and z components of rotations
-        mano[..., 3:51:3] *= -1
-        mano[..., 5:51:3] *= -1
+        # Negate x and z components of rotations
+        mirrored_mano[..., 3:51:3] *= -1
+        mirrored_mano[..., 5:51:3] *= -1
 
         # Mirror 2D joint coordinates if provided
         if joints_2d is not None:
@@ -291,7 +292,7 @@ class VideoMirror(nn.Module):
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mano, joints_2d
+        return video, mirrored_mano, joints_2d
 
 
 class CropHand:
