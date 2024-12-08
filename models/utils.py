@@ -39,9 +39,7 @@ def get_mano_joints(
     )
 
     # Reshape the joints to match the original batch size and time dimension
-    hand_joints = hand_joints.view(batch_size, num_frames, -1, 3)
-
-    return hand_joints
+    return hand_joints.view(batch_size, num_frames, -1, 3)
 
 
 def get_mano_joints_both_hands(
@@ -111,32 +109,25 @@ def project_joints_to_2d(
     """
     batch_size, num_frames, num_joints, _ = joints_3d.shape
 
-    # Project 3D keypoints to 2D for each batch
-    keypoints_2d = []
-    for b in range(batch_size):
-        batch_keypoints = []
-        # Get intrinsic matrix for this batch
-        batch_intrinsics = intrinsic_matrix[b]
+    # Reshape joints to combine batch and frames dimensions
+    joints_3d = joints_3d.view(batch_size * num_frames, num_joints, 3)
 
-        # Process each frame in the batch
-        for f in range(num_frames):
-            # Get joints for this frame
-            joints_f = joints_3d[b, f]  # Shape: (num_joints, 3)
+    # Repeat intrinsic matrix for each frame
+    intrinsic_matrix = intrinsic_matrix.unsqueeze(1).repeat(1, num_frames, 1, 1)
+    intrinsic_matrix = intrinsic_matrix.view(batch_size * num_frames, 3, 3)
 
-            # Transpose joints to match matrix multiplication dimensions
-            joints_f = joints_f.transpose(0, 1)  # Shape: (3, num_joints)
+    # Transpose joints for matrix multiplication
+    joints_3d = joints_3d.transpose(1, 2)  # Shape: (batch_size * num_frames, 3, num_joints)
 
-            # Matrix multiply with intrinsic matrix
-            keypoints_2d_temp = torch.matmul(batch_intrinsics, joints_f).transpose(0, 1)
+    # Project all points at once
+    projected = torch.bmm(intrinsic_matrix, joints_3d)  # Shape: (batch_size * num_frames, 3, num_joints)
+    projected = projected.transpose(1, 2)  # Shape: (batch_size * num_frames, num_joints, 3)
 
-            # Divide by z coordinates for perspective projection
-            batch_keypoints.append(keypoints_2d_temp[..., :2] / keypoints_2d_temp[..., 2:])
+    # Perspective division
+    keypoints_2d = projected[..., :2] / projected[..., 2:3]
 
-        # Stack frames for this batch
-        keypoints_2d.append(torch.stack(batch_keypoints))
-
-    # Stack all batches
-    return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
+    # Restore batch and frames dimensions
+    return keypoints_2d.view(batch_size, num_frames, num_joints, 2)
 
 
 def compute_similarity_transform(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
