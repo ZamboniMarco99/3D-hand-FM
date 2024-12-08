@@ -36,6 +36,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import functional as F  # noqa: N812
 
 from data.bbox_reader import BboxReader
+from data.joints_reader import JointsReader
 from data.mano_reader import ManoReader
 from data.transforms import CropHand, VideoMirror
 from data.video_reader import VideoReader
@@ -165,10 +166,19 @@ class H2ODataset(Dataset):
                         ),
                     )
 
+                    joints_dir_path = Path(scene_path) / directory / camera / "joints"
+                    self.joints_readers.append(
+                        JointsReader(
+                            joints_dir_path=joints_dir_path,
+                            fmt_frame_fn=lambda x: f"{x:06d}.json",
+                        ),
+                    )
+
                     self.clip_to_data[self.num_clips] = (
                         self.video_readers[-1],
                         self.mano_readers[-1],
                         self.bbox_readers[-1],
+                        self.joints_readers[-1],
                         self.camera_intrinsics[-1],
                     )
                     self.num_clips += len(self.video_readers[-1]) // self.num_frames
@@ -182,25 +192,29 @@ class H2ODataset(Dataset):
         """
         return 2 * self.num_clips
 
-    def _get_clip_data(self, clip_idx: int) -> tuple[VideoReader, ManoReader, BboxReader, np.ndarray, int]:
-        """Get the video reader, MANO reader, bbox reader, camera intrinsics and start frame for a given clip index.
+    def _get_clip_data(
+        self,
+        clip_idx: int,
+    ) -> tuple[VideoReader, ManoReader, BboxReader, JointsReader, np.ndarray, int]:
+        """Get the readers, camera intrinsics and start frame for a given clip index.
 
         Args:
             clip_idx (int): The index of the clip in the dataset.
 
         Returns:
-            tuple[VideoReader, ManoReader, BboxReader, np.ndarray, int]: A tuple containing:
+            tuple[VideoReader, ManoReader, BboxReader, JointsReader, np.ndarray, int]: A tuple containing:
                 - The VideoReader instance for the clip.
                 - The ManoReader instance for the clip.
                 - The BboxReader instance for the clip.
+                - The JointsReader instance for the clip.
                 - The camera intrinsic matrix with shape (3, 3).
                 - The start frame index of the clip within its video.
 
         """
         # Find the corresponding readers
-        video_idx, video_reader, mano_reader, bbox_reader, intrinsics = max(
-            (i, video, mano, bbox, intrinsics)
-            for i, (video, mano, bbox, intrinsics) in self.clip_to_data.items()
+        video_idx, video_reader, mano_reader, bbox_reader, joints_reader, intrinsics = max(
+            (i, video, mano, bbox, joints, intrinsics)
+            for i, (video, mano, bbox, joints, intrinsics) in self.clip_to_data.items()
             if i <= clip_idx
         )
 
@@ -208,7 +222,7 @@ class H2ODataset(Dataset):
         clip_idx_in_video = clip_idx - video_idx
         start_frame = self.num_frames * clip_idx_in_video
 
-        return video_reader, mano_reader, bbox_reader, intrinsics, start_frame
+        return video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame
 
     @staticmethod
     @cache
@@ -275,28 +289,52 @@ class H2ODataset(Dataset):
         """
         return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Retrieve a video clip and corresponding MANO parameters and camera intrinsics from the dataset.
-
-        This method loads frames, MANO parameters for both hands, and camera intrinsics from a single video clip
-        specified by the index. The frames are cropped around the hand based on bounding box data.
+    @staticmethod
+    @cache
+    def _get_joints_data(
+        joints_reader: JointsReader,
+        start_frame: int,
+        num_frames: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Get joints data from the joints reader for a given clip.
 
         Args:
-            idx (int): The index of the video clip to retrieve.
+            joints_reader (JointsReader): The joints reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains joints coordinates for the left hand for each frame.
+                - The second list contains joints coordinates for the right hand for each frame.
+
+        """
+        return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames)))
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip and corresponding MANO parameters, joints and camera intrinsics from the dataset.
+
+        This method loads frames, MANO parameters, 3D joint coordinates, and camera intrinsics from a single video clip
+        specified by the index. The frames are cropped around either the left or right hand based on the index.
+        If idx >= num_clips, the right hand is processed, otherwise the left hand.
+
+        Args:
+            idx (int): The index of the video clip to retrieve. Values [0, num_clips-1] process left hand,
+                      values [num_clips, 2*num_clips-1] process right hand.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
                   C is the number of channels (3), and H=W=output_size. Values are normalized with
                   mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
-                - A tensor of left hand MANO parameters with shape (T, 61), where T is the number of frames.
+                - A tensor of MANO parameters with shape (T, 61), where T is the number of frames.
                   Contains translation (3), pose (45) and shape (10) parameters.
-                - A tensor of right hand MANO parameters with shape (T, 61), where T is the number of frames.
-                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of 3D joint coordinates with shape (T, J, 3), where T is the number of frames
+                  and J is the number of joints.
                 - A tensor of camera intrinsic parameters with shape (3, 3).
 
         Raises:
-            IndexError: If the provided index is out of range.
+            IndexError: If the provided index is out of range [0, 2*num_clips-1].
 
         """
         if idx >= len(self):
@@ -308,12 +346,13 @@ class H2ODataset(Dataset):
             idx = idx - self.num_clips
             return_right_hand = True
 
-        video_reader, mano_reader, bbox_reader, intrinsics, start_frame = self._get_clip_data(idx)
+        video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame = self._get_clip_data(idx)
 
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
             mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames)
             bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames)
+            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames)
             mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
@@ -326,6 +365,11 @@ class H2ODataset(Dataset):
                 start_frame,
                 self.num_frames,
             )
+            joints_left, joints_right = self._get_joints_data.__wrapped__(
+                joints_reader,
+                start_frame,
+                self.num_frames,
+            )
 
         # Convert list of numpy arrays to PyTorch tensors
         clip = torch.from_numpy(np.stack(frames))
@@ -333,14 +377,18 @@ class H2ODataset(Dataset):
         mano_right = torch.from_numpy(np.stack(mano_params_right))
         bbox_left = torch.from_numpy(np.stack(bbox_left))
         bbox_right = torch.from_numpy(np.stack(bbox_right))
+        joints_left = torch.from_numpy(np.stack(joints_left))
+        joints_right = torch.from_numpy(np.stack(joints_right))
         intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
         if return_right_hand:
             mano_current = mano_right
             bbox_current = bbox_right
+            joints_current = joints_right
         else:
             mano_current = mano_left
             bbox_current = bbox_left
+            joints_current = joints_left
 
         # Apply CropHand transform for the current hand only
         clip_current, mano_current, intrinsics = self.crop_transform(
@@ -363,7 +411,7 @@ class H2ODataset(Dataset):
         # Normalize the cropped clip
         clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip_current, mano_current, intrinsics
+        return clip_current, mano_current, joints_current, intrinsics
 
 
 class H2ODataModule(pl.LightningDataModule):
