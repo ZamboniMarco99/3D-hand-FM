@@ -79,10 +79,7 @@ class H2ODataset(Dataset):
         dataset_prefix: str,
         scenes: list[str],
         cameras: list[str],
-        max_width: int | None = None,
-        max_height: int | None = None,
         num_frames: int | None = None,
-        crop: bool = False,
         cache: bool = True,
         transforms: list[nn.Module] | None = None,
         output_size: int = 224,
@@ -315,9 +312,10 @@ class H2ODataset(Dataset):
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
 
-        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates from a single video clip
-        specified by the index. The frames are cropped around either the left or right hand based on the index.
-        If idx >= num_clips, the right hand is processed, otherwise the left hand.
+        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
+        from a single video clip specified by the index. The frames are cropped around either
+        the left or right hand based on the index. If idx >= num_clips, the right hand is processed,
+        otherwise the left hand.
 
         Args:
             idx (int): The index of the video clip to retrieve. Values [0, num_clips-1] process left hand,
@@ -475,12 +473,9 @@ class H2ODataModule(pl.LightningDataModule):
         self,
         dataset_prefix: str,
         cameras: list[str],
-        max_width: int | None = None,
-        max_height: int | None = None,
         batch_size: int = 32,
         num_frames: int = 300,
         num_workers: int = 8,
-        crop: bool = False,
         transforms: list[nn.Module] | None = None,
         output_size: int = 224,
         padding_factor: float = 1.2,
@@ -490,12 +485,9 @@ class H2ODataModule(pl.LightningDataModule):
         Args:
             dataset_prefix (str): The prefix path to the dataset.
             cameras (list[str]): List of camera names to include in the dataset.
-            max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
-            max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             batch_size (int, optional): The batch size for DataLoaders. Defaults to 32.
             num_frames (int, optional): Number of frames to include per video. Defaults to 300.
             num_workers (int, optional): Number of worker processes for data loading. Defaults to 8.
-            crop (bool, optional): Whether to crop the frames to exact max_width and max_height. Defaults to False.
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
                 Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
                 tuple with transformed tensors. Defaults to None.
@@ -506,12 +498,9 @@ class H2ODataModule(pl.LightningDataModule):
         super().__init__()
         self.dataset_prefix = dataset_prefix
         self.cameras = cameras
-        self.max_width = max_width
-        self.max_height = max_height
         self.batch_size = batch_size
         self.num_frames = num_frames
         self.num_workers = num_workers
-        self.crop = crop
         self.transforms = transforms
         self.output_size = output_size
         self.padding_factor = padding_factor
@@ -535,10 +524,7 @@ class H2ODataModule(pl.LightningDataModule):
             dataset_prefix=self.dataset_prefix,
             scenes=self.train_scenes,
             cameras=self.cameras,
-            max_width=self.max_width,
-            max_height=self.max_height,
             num_frames=self.num_frames,
-            crop=self.crop,
             cache=False,
             transforms=self.transforms,
             output_size=self.output_size,
@@ -548,10 +534,7 @@ class H2ODataModule(pl.LightningDataModule):
             dataset_prefix=self.dataset_prefix,
             scenes=self.val_scenes,
             cameras=self.cameras,
-            max_width=self.max_width,
-            max_height=self.max_height,
             num_frames=self.num_frames,
-            crop=self.crop,
             cache=False,
             transforms=None,
             output_size=self.output_size,

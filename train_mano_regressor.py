@@ -35,12 +35,9 @@ def main(cfg: DictConfig) -> None:
     datamodule = H2ODataModule(
         dataset_prefix=cfg.data.dataset_prefix,
         cameras=cfg.data.cameras,
-        max_width=cfg.data.max_width,
-        max_height=cfg.data.max_height,
         num_frames=cfg.data.num_frames,
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
-        crop=cfg.data.pretrained,
         transforms=transforms,
     )
     logger.info("DataModule initialized")
