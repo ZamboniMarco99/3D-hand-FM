@@ -384,7 +384,7 @@ class H2ODataset(Dataset):
             bbox_current = bbox_left
             joints_current = joints_left
 
-        joints_2d_current = project_joints_to_2d(joints_current + mano_current[:, :3], intrinsics)
+        joints_2d_current = project_joints_to_2d(joints_current + mano_current[..., :3], intrinsics)
 
         # Apply CropHand transform for the current hand only
         clip_current, joints_2d_current = self.crop_transform(
