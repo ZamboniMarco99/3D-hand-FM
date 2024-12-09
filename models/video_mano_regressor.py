@@ -206,6 +206,7 @@ class VideoMANORegressor(pl.LightningModule):
         mano_params: int = 61,  # Single hand, 61 parameters
         learning_rate: float = 1e-3,  # noqa: ARG002
         pretrained: bool = False,
+        focal_length: float | None = None,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -220,6 +221,7 @@ class VideoMANORegressor(pl.LightningModule):
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 61.
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
+            focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -228,6 +230,23 @@ class VideoMANORegressor(pl.LightningModule):
         """
         super().__init__()
         self.save_hyperparameters()
+
+        # Set default focal length if not provided
+        if focal_length is None:
+            focal_length = width / 2
+
+        # Create default camera intrinsic matrix
+        self.register_buffer(
+            "intrinsic_matrix",
+            torch.tensor(
+                [
+                    [focal_length, 0, width / 2],
+                    [0, focal_length, height / 2],
+                    [0, 0, 1],
+                ],
+                dtype=torch.float32,
+            ),
+        )
 
         # MViT encoder
         if pretrained:
@@ -270,7 +289,10 @@ class VideoMANORegressor(pl.LightningModule):
             x (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
 
         Returns:
-            torch.Tensor: Predicted MANO parameters.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing:
+                - Predicted MANO parameters
+                - Predicted 3D hand joints
+                - Predicted 2D hand joints
 
         """
         features = self.backbone(x)
@@ -284,7 +306,13 @@ class VideoMANORegressor(pl.LightningModule):
             self.mano_left,
         )
 
-        return hand_params, hand_joints
+        # Project 3D joints to 2D using predicted translation
+        hand_joints_2d = project_joints_to_2d(
+            hand_joints + hand_params[..., :3],
+            self.intrinsic_matrix,
+        )
+
+        return hand_params, hand_joints, hand_joints_2d
 
     def loss_function(
         self,
@@ -319,33 +347,35 @@ class VideoMANORegressor(pl.LightningModule):
         pose_loss = F.mse_loss(y_pred[..., 3:51], y_true[..., 3:51])
         shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
         keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
-        # keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
-        # loss = pose_loss + shape_loss + keypoints_loss + keypoints_2d_loss
+        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
 
-        return pose_loss + shape_loss + keypoints_loss
+        return pose_loss + shape_loss + keypoints_loss + keypoints_2d_loss
 
-    def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:  # noqa: ARG002
+    def training_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,  # noqa: ARG002
+    ) -> torch.Tensor:
         """Training step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor]): A tuple containing input video frames and target MANO parameters.
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+                - Input video frames (B, T, C, H, W)
+                - Target MANO parameters (B, T, 61)
+                - Target 3D joints (B, T, J, 3)
+                - Target 2D joints (B, T, J, 2)
             batch_idx (int): Index of the batch.
 
         Returns:
             torch.Tensor: Loss value.
 
         """
-        x, y, intrinsic_matrix = batch
+        x, y, true_hand_joints, true_keypoints_2d = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints = self(x)
-        true_hand_joints = get_mano_joints(y, self.mano_left)
-
-        # Project 3D joints to 2D
-        true_keypoints_2d = project_joints_to_2d(true_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d = project_joints_to_2d(pred_hand_joints, intrinsic_matrix)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
 
         loss = self.loss_function(
             y_pred,
@@ -372,25 +402,28 @@ class VideoMANORegressor(pl.LightningModule):
 
         return loss
 
-    def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:  # noqa: ARG002
+    def validation_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,  # noqa: ARG002
+    ) -> None:
         """Validation step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor]): A tuple containing input video frames and target MANO parameters.
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+                - Input video frames (B, T, C, H, W)
+                - Target MANO parameters (B, T, 61)
+                - Target 3D joints (B, T, J, 3)
+                - Target 2D joints (B, T, J, 2)
             batch_idx (int): Index of the batch.
 
         """
-        x, y, intrinsic_matrix = batch
+        x, y, true_hand_joints, true_keypoints_2d = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints = self(x)
-        true_hand_joints = get_mano_joints(y, self.mano_left)
-
-        # Project 3D joints to 2D
-        true_keypoints_2d = project_joints_to_2d(true_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d = project_joints_to_2d(pred_hand_joints, intrinsic_matrix)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
 
         loss = self.loss_function(
             y_pred,
