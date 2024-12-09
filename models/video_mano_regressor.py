@@ -205,6 +205,7 @@ class VideoMANORegressor(pl.LightningModule):
         flat_hand_mean: bool = True,
         mano_params: int = 61,  # Single hand, 61 parameters
         learning_rate: float = 1e-3,  # noqa: ARG002
+        loss_weights: dict[str, float] | None = None,  # noqa: ARG002
         pretrained: bool = False,
         focal_length: float | None = None,
     ) -> None:
@@ -220,6 +221,7 @@ class VideoMANORegressor(pl.LightningModule):
             flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to True.
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 61.
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            loss_weights (dict[str, float], optional): Loss weights for the different components.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
 
@@ -347,12 +349,31 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: The computed loss.
 
         """
-        pose_loss = F.mse_loss(y_pred[..., 3:51], y_true[..., 3:51])
+        global_orientation_loss = F.mse_loss(y_pred[..., 3:6], y_true[..., 3:6])
+        pose_loss = F.mse_loss(y_pred[..., 6:51], y_true[..., 6:51])
         shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
         keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
         keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
 
-        return pose_loss + shape_loss + keypoints_loss + keypoints_2d_loss
+        if self.hparams.loss_weights is None:
+            losses = {
+                "global_orientation": global_orientation_loss,
+                "pose": pose_loss,
+                "shape": shape_loss,
+                "keypoints_3d": keypoints_loss,
+                "keypoints_2d": keypoints_2d_loss,
+            }
+        else:
+            losses = {
+                "global_orientation": self.hparams.loss_weights["global_orientation"] * global_orientation_loss,
+                "pose": self.hparams.loss_weights["pose"] * pose_loss,
+                "shape": self.hparams.loss_weights["shape"] * shape_loss,
+                "keypoints_3d": self.hparams.loss_weights["keypoints_3d"] * keypoints_loss,
+                "keypoints_2d": self.hparams.loss_weights["keypoints_2d"] * keypoints_2d_loss,
+            }
+
+        losses["loss"] = sum(losses.values())
+        return losses
 
     def training_step(
         self,
@@ -380,7 +401,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
 
-        loss = self.loss_function(
+        losses = self.loss_function(
             y_pred,
             y,
             pred_hand_joints,
@@ -388,6 +409,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
         )
+        loss = losses["loss"]
 
         # Additional metrics
         mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
@@ -402,6 +424,8 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("train/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("train/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        for key, value in losses.items():
+            self.log(f"train/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -428,7 +452,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
 
-        loss = self.loss_function(
+        losses = self.loss_function(
             y_pred,
             y,
             pred_hand_joints,
@@ -436,7 +460,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
         )
-
+        loss = losses["loss"]
         # Additional metrics
         mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
         mje_2d = torch.linalg.vector_norm(pred_keypoints_2d - true_keypoints_2d, dim=-1).mean(dim=-1).mean()
@@ -450,6 +474,8 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("val/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
         self.log("val/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        for key, value in losses.items():
+            self.log(f"val/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.

@@ -54,6 +54,7 @@ def main(cfg: DictConfig) -> None:
         width=width,
         mano_root=os.environ.get("MANO_ROOT"),
         learning_rate=cfg.model.learning_rate,
+        loss_weights=cfg.model.loss_weights,
         pretrained=cfg.data.pretrained,
     )
     logger.info("Model initialized")
