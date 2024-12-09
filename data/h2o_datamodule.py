@@ -179,9 +179,12 @@ class H2ODataset(Dataset):
                     )
 
                     # Calculate the number of clips based on the desired fps
-                    step = self.base_framerate // self.fps
-                    full_starts = len(self.video_readers[-1]) // (step * self.num_frames)
-                    partials = max((len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames), 0)
+                    step = int(self.base_framerate // self.fps)
+                    full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
+                    partials = max(
+                        (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
+                        0,
+                    )
                     total_len = full_starts * step + partials
                     self.num_clips += total_len
 
@@ -222,7 +225,7 @@ class H2ODataset(Dataset):
 
         # Calculate the start frame of the clip within the video
         clip_idx_in_video = clip_idx - video_idx
-        step = self.base_framerate // self.fps
+        step = int(self.base_framerate // self.fps)
         full = clip_idx_in_video // step
         partial = clip_idx_in_video % step
         start_frame = full * (step * self.num_frames) + partial
@@ -243,7 +246,7 @@ class H2ODataset(Dataset):
             list[np.ndarray]: A list of video frames with shape (H, W, C).
 
         """
-        step = self.base_framerate // self.fps
+        step = int(self.base_framerate // self.fps)
         frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames * step, step)))
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
