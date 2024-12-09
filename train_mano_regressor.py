@@ -74,7 +74,7 @@ def main(cfg: DictConfig) -> None:
     checkpoint_callback = ModelCheckpoint(
         monitor="val/loss",
         mode="min",
-        filename="best-checkpoint",
+        filename="epoch{epoch:02d}-val{val_loss:.2f}",
         save_top_k=1,
         verbose=True,
     )
