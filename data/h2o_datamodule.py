@@ -260,6 +260,7 @@ class H2ODataset(Dataset):
         mano_reader: ManoReader,
         start_frame: int,
         num_frames: int,
+        step: int,
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Get MANO parameters from the MANO reader for a given clip.
 
@@ -267,6 +268,7 @@ class H2ODataset(Dataset):
             mano_reader (ManoReader): The MANO reader instance.
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
@@ -274,7 +276,7 @@ class H2ODataset(Dataset):
                 - The second list contains MANO parameters for the right hand for each frame.
 
         """
-        return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames)))
+        return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
     @staticmethod
     @cache
@@ -282,6 +284,7 @@ class H2ODataset(Dataset):
         bbox_reader: BboxReader,
         start_frame: int,
         num_frames: int,
+        step: int,
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Get bounding box data from the bbox reader for a given clip.
 
@@ -289,6 +292,7 @@ class H2ODataset(Dataset):
             bbox_reader (BboxReader): The bbox reader instance.
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
@@ -296,7 +300,7 @@ class H2ODataset(Dataset):
                 - The second list contains bbox coordinates for the right hand for each frame.
 
         """
-        return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames)))
+        return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
     @staticmethod
     @cache
@@ -304,6 +308,7 @@ class H2ODataset(Dataset):
         joints_reader: JointsReader,
         start_frame: int,
         num_frames: int,
+        step: int,
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Get joints data from the joints reader for a given clip.
 
@@ -311,6 +316,7 @@ class H2ODataset(Dataset):
             joints_reader (JointsReader): The joints reader instance.
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
@@ -318,7 +324,7 @@ class H2ODataset(Dataset):
                 - The second list contains joints coordinates for the right hand for each frame.
 
         """
-        return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames)))
+        return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
