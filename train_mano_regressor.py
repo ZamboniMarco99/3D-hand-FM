@@ -43,12 +43,8 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info("DataModule initialized")
 
-    if cfg.data.resolution == "16x9":
-        width = cfg.data.max_width
-        height = int(cfg.data.max_width * 9 / 16)
-    else:
-        width = cfg.data.max_width
-        height = cfg.data.max_height
+    height = cfg.data.crop_size
+    width = cfg.data.crop_size
 
     # Initialize the model
     model = VideoMANORegressor(
