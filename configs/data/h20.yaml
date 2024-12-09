@@ -2,6 +2,7 @@ dataset_prefix: "/cluster/project/cvg/data/H2O"
 resolution: "16x9"
 num_frames: 32
 pretrained: False
+crop_size: 224
 cameras:
   - "cam0"
   - "cam1"

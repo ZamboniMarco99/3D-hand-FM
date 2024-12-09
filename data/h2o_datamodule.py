@@ -12,8 +12,7 @@ Example usage:
     datamodule = H2ODataModule(
         video_paths=['video1.mp4', 'video2.mp4'],
         frame_dir_paths=['frames1', 'frames2'],
-        max_width=640,
-        max_height=480,
+        crop_size=224,
         num_frames=100,
         batch_size=32,
         num_workers=4
@@ -64,8 +63,6 @@ class H2ODataset(Dataset):
         dataset_prefix (str): The root directory path of the dataset.
         scenes (list[str]): List of scene names to include in the dataset.
         cameras (list[str]): List of camera names to include in the dataset.
-        max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
-        max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
         num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
 
     The dataset is constructed by creating VideoReader and ManoReader instances for each
@@ -82,7 +79,7 @@ class H2ODataset(Dataset):
         num_frames: int | None = None,
         cache: bool = True,
         transforms: list[nn.Module] | None = None,
-        output_size: int = 224,
+        crop_size: int = 224,
         padding_factor: float = 1.2,
     ) -> None:
         """Initialize the H2ODataset.
@@ -91,20 +88,16 @@ class H2ODataset(Dataset):
             dataset_prefix (str): The root directory path of the dataset.
             scenes (list[str]): List of scene names to include in the dataset.
             cameras (list[str]): List of camera names to include in the dataset.
-            max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
-            max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
-            crop (bool, optional): If True, crop videos to exact max_width and max_height sizes. Defaults to False.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply. Each transform
                 should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same tuple
                 with transformed tensors. Defaults to None.
-            output_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+            crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
 
         The dataset is constructed by creating VideoReader and ManoReader instances for each combination
         of scene and camera, using the provided dataset_prefix to construct the full path.
-        If crop is True, videos will be cropped to the exact max_width and max_height sizes.
         If cache is True, data will be cached in memory for faster access.
         If transforms is provided, the transforms will be applied sequentially to the video and parameters.
 
@@ -119,7 +112,7 @@ class H2ODataset(Dataset):
         self.transforms = transforms
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
-        self.crop_transform = CropHand(output_size=output_size, padding_factor=padding_factor)
+        self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
         self.mirror_transform = VideoMirror(p=1)
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
@@ -430,8 +423,6 @@ class H2ODataModule(pl.LightningDataModule):
     Args:
         dataset_prefix (str): The prefix path to the dataset.
         cameras (list[str]): List of camera names to include in the dataset.
-        max_width (int | None, optional): Maximum width for resizing frames. Defaults to None.
-        max_height (int | None, optional): Maximum height for resizing frames. Defaults to None.
         batch_size (int, optional): The batch size for DataLoaders. Defaults to 32.
         num_frames (int, optional): Number of frames to include per video. Defaults to 300.
 
@@ -439,8 +430,6 @@ class H2ODataModule(pl.LightningDataModule):
         datamodule = H2ODataModule(
             dataset_prefix='/path/to/dataset',
             cameras=['cam1', 'cam2'],
-            max_width=640,
-            max_height=480,
             batch_size=16,
             num_frames=200
         )
@@ -477,7 +466,7 @@ class H2ODataModule(pl.LightningDataModule):
         num_frames: int = 300,
         num_workers: int = 8,
         transforms: list[nn.Module] | None = None,
-        output_size: int = 224,
+        crop_size: int = 224,
         padding_factor: float = 1.2,
     ) -> None:
         """Initialize the H2ODataModule.
@@ -491,7 +480,7 @@ class H2ODataModule(pl.LightningDataModule):
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
                 Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
                 tuple with transformed tensors. Defaults to None.
-            output_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+            crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
 
         """
@@ -502,7 +491,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.num_frames = num_frames
         self.num_workers = num_workers
         self.transforms = transforms
-        self.output_size = output_size
+        self.crop_size = crop_size
         self.padding_factor = padding_factor
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
@@ -527,7 +516,7 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames=self.num_frames,
             cache=False,
             transforms=self.transforms,
-            output_size=self.output_size,
+            crop_size=self.crop_size,
             padding_factor=self.padding_factor,
         )
         self.val_dataset = H2ODataset(
@@ -537,7 +526,7 @@ class H2ODataModule(pl.LightningDataModule):
             num_frames=self.num_frames,
             cache=False,
             transforms=None,
-            output_size=self.output_size,
+            crop_size=self.crop_size,
             padding_factor=self.padding_factor,
         )
 
