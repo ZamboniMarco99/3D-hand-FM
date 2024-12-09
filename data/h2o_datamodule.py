@@ -367,25 +367,28 @@ class H2ODataset(Dataset):
         step = int(self.base_framerate // self.fps)
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
-            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames)
-            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames)
-            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames)
+            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames, step)
+            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
+            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
             mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
                 mano_reader,
                 start_frame,
                 self.num_frames,
+                step,
             )
             bbox_left, bbox_right = self._get_bbox_data.__wrapped__(
                 bbox_reader,
                 start_frame,
                 self.num_frames,
+                step,
             )
             joints_left, joints_right = self._get_joints_data.__wrapped__(
                 joints_reader,
                 start_frame,
                 self.num_frames,
+                step,
             )
 
         # Convert list of numpy arrays to PyTorch tensors
