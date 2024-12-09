@@ -39,6 +39,7 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
         crop_size=cfg.data.crop_size,
+        padding_factor=cfg.data.padding_factor,
         transforms=transforms,
     )
     logger.info("DataModule initialized")

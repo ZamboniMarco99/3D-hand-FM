@@ -3,6 +3,7 @@ resolution: "1x1"
 num_frames: 16
 framerate: 7.5
 crop_size: 224
+padding_factor: 2
 pretrained: True
 cameras:
   - "cam0"
