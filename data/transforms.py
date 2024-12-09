@@ -279,7 +279,7 @@ class VideoMirror(nn.Module):
 
         # Mirror relevant pose parameters
         # Negate x and z components of rotations
-        mirrored_mano[..., 3:51:3] *= -1
+        mirrored_mano[..., 4:51:3] *= -1
         mirrored_mano[..., 5:51:3] *= -1
 
         # Mirror 2D joint coordinates if provided
