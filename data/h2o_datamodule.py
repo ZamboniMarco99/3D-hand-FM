@@ -384,7 +384,9 @@ class H2ODataset(Dataset):
             bbox_current = bbox_left
             joints_current = joints_left
 
-        mano_trans = mano_current[..., :3].unsqueeze(1)
+        mano_trans = mano_current[..., :3].unsqueeze(1).clone()
+        # Scale to milimeters
+        mano_trans = mano_trans * 1000
         joints_2d_current = project_joints_to_2d(
             (joints_current + mano_trans).unsqueeze(0),
             intrinsics,
