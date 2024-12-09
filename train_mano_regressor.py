@@ -37,6 +37,7 @@ def main(cfg: DictConfig) -> None:
         dataset_prefix=cfg.data.dataset_prefix,
         cameras=cfg.data.cameras,
         num_frames=cfg.data.num_frames,
+        fps=cfg.data.framerate,
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
         crop_size=cfg.data.crop_size,

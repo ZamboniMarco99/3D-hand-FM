@@ -77,6 +77,7 @@ class H2ODataset(Dataset):
         scenes: list[str],
         cameras: list[str],
         num_frames: int | None = None,
+        fps: float = 7.5,
         cache: bool = True,
         transforms: list[nn.Module] | None = None,
         crop_size: int = 224,
@@ -89,6 +90,7 @@ class H2ODataset(Dataset):
             scenes (list[str]): List of scene names to include in the dataset.
             cameras (list[str]): List of camera names to include in the dataset.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+            fps (float, optional): Desired frames per second. Defaults to 7.5.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply. Each transform
                 should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same tuple
@@ -109,6 +111,8 @@ class H2ODataset(Dataset):
         self.camera_intrinsics = []
         self.num_clips = 0
         self.num_frames = num_frames
+        self.fps = fps
+        self.base_framerate = 30
         self.cache = cache
         self.transforms = transforms
         # Maps the first dataset index to the corresponding video reader and MANO reader
@@ -173,7 +177,13 @@ class H2ODataset(Dataset):
                         self.joints_readers[-1],
                         self.camera_intrinsics[-1],
                     )
-                    self.num_clips += len(self.video_readers[-1]) // self.num_frames
+
+                    # Calculate the number of clips based on the desired fps
+                    step = self.base_framerate // self.fps
+                    full_starts = len(self.video_readers[-1]) // (step * self.num_frames)
+                    partials = max((len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames), 0)
+                    total_len = full_starts * step + partials
+                    self.num_clips += total_len
 
     def __len__(self) -> int:
         """Get the total number of clips in the dataset.
@@ -212,7 +222,10 @@ class H2ODataset(Dataset):
 
         # Calculate the start frame of the clip within the video
         clip_idx_in_video = clip_idx - video_idx
-        start_frame = self.num_frames * clip_idx_in_video
+        step = self.base_framerate // self.fps
+        full = clip_idx_in_video // step
+        partial = clip_idx_in_video % step
+        start_frame = full * (step * self.num_frames) + partial
 
         return video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame
 
@@ -230,7 +243,8 @@ class H2ODataset(Dataset):
             list[np.ndarray]: A list of video frames with shape (H, W, C).
 
         """
-        frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames)))
+        step = self.base_framerate // self.fps
+        frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames * step, step)))
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
         normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
@@ -475,6 +489,7 @@ class H2ODataModule(pl.LightningDataModule):
         cameras: list[str],
         batch_size: int = 32,
         num_frames: int = 300,
+        fps: float = 7.5,
         num_workers: int = 8,
         transforms: list[nn.Module] | None = None,
         crop_size: int = 224,
@@ -487,6 +502,7 @@ class H2ODataModule(pl.LightningDataModule):
             cameras (list[str]): List of camera names to include in the dataset.
             batch_size (int, optional): The batch size for DataLoaders. Defaults to 32.
             num_frames (int, optional): Number of frames to include per video. Defaults to 300.
+            fps (float, optional): Desired frames per second. Defaults to 7.5.
             num_workers (int, optional): Number of worker processes for data loading. Defaults to 8.
             transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
                 Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
@@ -500,6 +516,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.cameras = cameras
         self.batch_size = batch_size
         self.num_frames = num_frames
+        self.fps = fps
         self.num_workers = num_workers
         self.transforms = transforms
         self.crop_size = crop_size
@@ -525,6 +542,7 @@ class H2ODataModule(pl.LightningDataModule):
             scenes=self.train_scenes,
             cameras=self.cameras,
             num_frames=self.num_frames,
+            fps=self.fps,
             cache=False,
             transforms=self.transforms,
             crop_size=self.crop_size,
@@ -535,6 +553,7 @@ class H2ODataModule(pl.LightningDataModule):
             scenes=self.val_scenes,
             cameras=self.cameras,
             num_frames=self.num_frames,
+            fps=self.fps,
             cache=False,
             transforms=None,
             crop_size=self.crop_size,
