@@ -105,6 +105,7 @@ class H2ODataset(Dataset):
         self.video_readers = []
         self.mano_readers = []
         self.bbox_readers = []
+        self.joints_readers = []
         self.camera_intrinsics = []
         self.num_clips = 0
         self.num_frames = num_frames
