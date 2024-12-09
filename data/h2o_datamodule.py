@@ -234,19 +234,19 @@ class H2ODataset(Dataset):
 
     @staticmethod
     @cache
-    def _get_video_frames(video_reader: VideoReader, start_frame: int, num_frames: int) -> list[np.ndarray]:
+    def _get_video_frames(video_reader: VideoReader, start_frame: int, num_frames: int, step: int) -> list[np.ndarray]:
         """Get video frames from the video reader for a given clip.
 
         Args:
             video_reader (VideoReader): The video reader instance.
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
 
         Returns:
             list[np.ndarray]: A list of video frames with shape (H, W, C).
 
         """
-        step = int(self.base_framerate // self.fps)
         frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames * step, step)))
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
@@ -358,14 +358,14 @@ class H2ODataset(Dataset):
             return_right_hand = True
 
         video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame = self._get_clip_data(idx)
-
+        step = int(self.base_framerate // self.fps)
         if self.cache:
-            frames = self._get_video_frames(video_reader, start_frame, self.num_frames)
+            frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
             mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames)
             bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames)
             joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames)
         else:
-            frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames)
+            frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
             mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
                 mano_reader,
                 start_frame,
