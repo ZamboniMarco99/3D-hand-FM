@@ -40,6 +40,7 @@ from data.joints_reader import JointsReader
 from data.mano_reader import ManoReader
 from data.transforms import CropHand, VideoMirror
 from data.video_reader import VideoReader
+from models.utils import project_joints_to_2d
 
 
 class H2ODataset(Dataset):
@@ -312,9 +313,9 @@ class H2ODataset(Dataset):
         return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames)))
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Retrieve a video clip and corresponding MANO parameters, joints and camera intrinsics from the dataset.
+        """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
 
-        This method loads frames, MANO parameters, 3D joint coordinates, and camera intrinsics from a single video clip
+        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates from a single video clip
         specified by the index. The frames are cropped around either the left or right hand based on the index.
         If idx >= num_clips, the right hand is processed, otherwise the left hand.
 
@@ -331,7 +332,8 @@ class H2ODataset(Dataset):
                   Contains translation (3), pose (45) and shape (10) parameters.
                 - A tensor of 3D joint coordinates with shape (T, J, 3), where T is the number of frames
                   and J is the number of joints.
-                - A tensor of camera intrinsic parameters with shape (3, 3).
+                - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
+                  and J is the number of joints.
 
         Raises:
             IndexError: If the provided index is out of range [0, 2*num_clips-1].
@@ -390,12 +392,13 @@ class H2ODataset(Dataset):
             bbox_current = bbox_left
             joints_current = joints_left
 
+        joints_2d_current = project_joints_to_2d(joints_current + mano_current[:, :3], intrinsics)
+
         # Apply CropHand transform for the current hand only
-        clip_current, mano_current, intrinsics = self.crop_transform(
+        clip_current, joints_2d_current = self.crop_transform(
             clip,
-            mano_current,
             bbox_current,
-            intrinsics,
+            joints_2d_current,
         )
         if return_right_hand:
             clip_current, mano_current, intrinsics = self.mirror_transform(clip_current, mano_current, intrinsics)
@@ -411,7 +414,7 @@ class H2ODataset(Dataset):
         # Normalize the cropped clip
         clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip_current, mano_current, joints_current, intrinsics
+        return clip_current, mano_current, joints_current, joints_2d_current
 
 
 class H2ODataModule(pl.LightningDataModule):
