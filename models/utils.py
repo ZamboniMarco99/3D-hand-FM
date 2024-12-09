@@ -21,7 +21,7 @@ def get_mano_joints(
         mano (ManoLayer): MANO model for the hand.
 
     Returns:
-        torch.Tensor: Tensor of shape (batch_size, num_joints, 3) of hand joints
+        torch.Tensor: Tensor of shape (batch_size, num_joints, 3) of hand joints without translation
 
     """
     # Get the device of mano_params
@@ -31,11 +31,10 @@ def get_mano_joints(
     # Push the time dimension in the batch dimension
     params = mano_params.view(-1, mano_params.shape[2])
 
-    # Process hand
+    # Process hand without translation
     _, hand_joints = mano(
         params[:, 3:51],  # pose
         params[:, 51:],  # shape
-        params[:, :3],  # translation
     )
 
     # Reshape the joints to match the original batch size and time dimension
@@ -101,7 +100,7 @@ def project_joints_to_2d(
 
     Args:
         joints_3d (torch.Tensor): 3D joint coordinates with shape (batch_size, num_frames, num_joints, 3)
-        intrinsic_matrix (torch.Tensor): Camera intrinsic matrix with shape (batch_size, 3, 3)
+        intrinsic_matrix (torch.Tensor): Camera intrinsic matrix with shape (3, 3) or (batch_size, 3, 3)
 
     Returns:
         torch.Tensor: 2D joint coordinates with shape (batch_size, num_frames, num_joints, 2)
@@ -112,9 +111,14 @@ def project_joints_to_2d(
     # Reshape joints to combine batch and frames dimensions
     joints_3d = joints_3d.view(batch_size * num_frames, num_joints, 3)
 
-    # Repeat intrinsic matrix for each frame
-    intrinsic_matrix = intrinsic_matrix.unsqueeze(1).repeat(1, num_frames, 1, 1)
-    intrinsic_matrix = intrinsic_matrix.view(batch_size * num_frames, 3, 3)
+    # Handle both single and batched intrinsic matrices
+    if intrinsic_matrix.dim() == 2:  # noqa: PLR2004
+        # Single intrinsic matrix - expand to match batch size
+        intrinsic_matrix = intrinsic_matrix.unsqueeze(0).expand(batch_size * num_frames, -1, -1)
+    else:
+        # Batched intrinsic matrix - repeat for each frame
+        intrinsic_matrix = intrinsic_matrix.unsqueeze(1).repeat(1, num_frames, 1, 1)
+        intrinsic_matrix = intrinsic_matrix.view(batch_size * num_frames, 3, 3)
 
     # Transpose joints for matrix multiplication
     joints_3d = joints_3d.transpose(1, 2)  # Shape: (batch_size * num_frames, 3, num_joints)
