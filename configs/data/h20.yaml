@@ -1,4 +1,4 @@
-dataset_prefix: "/cluster/project/cvg/data/H2O"
+dataset_prefix: "/cluster/project/cvg/students/mzamboni/data/H2O"
 resolution: "16x9"
 num_frames: 32
 pretrained: False
