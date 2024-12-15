@@ -208,6 +208,7 @@ class VideoMANORegressor(pl.LightningModule):
         loss_weights: dict[str, float] | None = None,  # noqa: ARG002
         pretrained: bool = False,
         focal_length: float | None = None,
+        sixd: bool = False,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -224,6 +225,7 @@ class VideoMANORegressor(pl.LightningModule):
             loss_weights (dict[str, float], optional): Loss weights for the different components.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
+            sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -284,6 +286,7 @@ class VideoMANORegressor(pl.LightningModule):
             side="left",
         )
         self.mano_left.requires_grad_(requires_grad=False)
+        self.sixd = sixd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
@@ -307,6 +310,7 @@ class VideoMANORegressor(pl.LightningModule):
         hand_joints = get_mano_joints(
             hand_params,
             self.mano_left,
+            self.sixd,
         )
 
         # Project 3D joints to 2D using predicted translation
@@ -401,6 +405,10 @@ class VideoMANORegressor(pl.LightningModule):
         """
         x, y, true_hand_joints, true_keypoints_2d = batch
 
+        if self.sixd:
+            # convert to 6D pose
+            y = mano_to_sixd(y_left)
+
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
@@ -451,6 +459,10 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         x, y, true_hand_joints, true_keypoints_2d = batch
+
+        if self.sixd:
+            # convert to 6D pose
+            y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]

@@ -141,7 +141,7 @@ class H2ODataset(Dataset):
                             [fx, 0, cx],
                             [0, fy, cy],
                             [0, 0, 1],
-                        ],
+                        ], dtype=np.float32,
                     )
                     self.camera_intrinsics.append(intrinsics)
 

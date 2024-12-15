@@ -58,6 +58,8 @@ def main(cfg: DictConfig) -> None:
         learning_rate=cfg.model.learning_rate,
         loss_weights=cfg.model.loss_weights,
         pretrained=cfg.data.pretrained,
+        mano_params=cfg.model.mano_params,
+        sixd=cfg.model.sixd,
     )
     logger.info("Model initialized")
 

@@ -21,6 +21,8 @@ model:
 
 transforms:
   - VideoColorJitter
+  sixd: True
+  mano_params: 109
 
 logger:
   name: "run_pretrained"
