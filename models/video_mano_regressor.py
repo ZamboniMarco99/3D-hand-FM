@@ -20,7 +20,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints, project_joints_to_2d, reconstruction_error
+from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d, reconstruction_error
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -358,8 +358,15 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: The computed loss.
 
         """
-        global_orientation_loss = F.mse_loss(y_pred[..., 3:6], y_true[..., 3:6])
-        pose_loss = F.mse_loss(y_pred[..., 6:51], y_true[..., 6:51])
+        end_global_orientation = 9 if self.sixd else 6
+        global_orientation_loss = F.mse_loss(
+            y_pred[..., 3:end_global_orientation],
+            y_true[..., 3:end_global_orientation],
+        )
+        pose_loss = F.mse_loss(
+            y_pred[..., end_global_orientation:-10],
+            y_true[..., end_global_orientation:-10],
+        )
         shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
         keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
         keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
@@ -407,7 +414,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         if self.sixd:
             # convert to 6D pose
-            y = mano_to_sixd(y_left)
+            y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
