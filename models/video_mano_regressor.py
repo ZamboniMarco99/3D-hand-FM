@@ -231,11 +231,12 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         super().__init__()
-        self.save_hyperparameters()
 
         # Set default focal length if not provided
         if focal_length is None:
             focal_length = width / 2
+
+        self.save_hyperparameters()
 
         # Create default camera intrinsic matrix
         self.register_buffer(
