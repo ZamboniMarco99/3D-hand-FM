@@ -6,6 +6,7 @@ import os
 import hydra
 import pytorch_lightning as pl
 from omegaconf import DictConfig
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from data.h2o_datamodule import H2ODataModule
@@ -35,22 +36,18 @@ def main(cfg: DictConfig) -> None:
     datamodule = H2ODataModule(
         dataset_prefix=cfg.data.dataset_prefix,
         cameras=cfg.data.cameras,
-        max_width=cfg.data.max_width,
-        max_height=cfg.data.max_height,
         num_frames=cfg.data.num_frames,
+        fps=cfg.data.framerate,
         batch_size=cfg.data.loader.batch_size,
         num_workers=cfg.data.loader.num_workers,
-        crop=cfg.data.pretrained,
+        crop_size=cfg.data.crop_size,
+        padding_factor=cfg.data.padding_factor,
         transforms=transforms,
     )
     logger.info("DataModule initialized")
 
-    if cfg.data.resolution == "16x9":
-        width = cfg.data.max_width
-        height = int(cfg.data.max_width * 9 / 16)
-    else:
-        width = cfg.data.max_width
-        height = cfg.data.max_height
+    height = cfg.data.crop_size
+    width = cfg.data.crop_size
 
     # Initialize the model
     model = VideoMANORegressor(
@@ -59,6 +56,7 @@ def main(cfg: DictConfig) -> None:
         width=width,
         mano_root=os.environ.get("MANO_ROOT"),
         learning_rate=cfg.model.learning_rate,
+        loss_weights=cfg.model.loss_weights,
         pretrained=cfg.data.pretrained,
     )
     logger.info("Model initialized")
@@ -72,6 +70,15 @@ def main(cfg: DictConfig) -> None:
     )
     logger.info("WandbLogger initialized")
 
+    # Save the best model
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val/loss",
+        mode="min",
+        filename="epoch{epoch:02d}-val{val_loss:.2f}",
+        save_top_k=1,
+        verbose=True,
+    )
+
     # Initialize the trainer
     trainer = pl.Trainer(
         max_epochs=cfg.trainer.max_epochs,
@@ -79,6 +86,7 @@ def main(cfg: DictConfig) -> None:
         devices=cfg.trainer.devices,
         logger=wandb_logger,
         log_every_n_steps=16,
+        callbacks=[checkpoint_callback],
     )
     logger.info("Trainer initialized")
 

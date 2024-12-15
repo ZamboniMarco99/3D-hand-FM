@@ -205,7 +205,9 @@ class VideoMANORegressor(pl.LightningModule):
         flat_hand_mean: bool = True,
         mano_params: int = 61,  # Single hand, 61 parameters
         learning_rate: float = 1e-3,  # noqa: ARG002
+        loss_weights: dict[str, float] | None = None,  # noqa: ARG002
         pretrained: bool = False,
+        focal_length: float | None = None,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -219,7 +221,9 @@ class VideoMANORegressor(pl.LightningModule):
             flat_hand_mean (bool, optional): Whether to use flat hand mean. Defaults to True.
             mano_params (int, optional): Number of MANO parameters to predict. Defaults to 61.
             learning_rate (float, optional): Learning rate for the optimizer. Defaults to 1e-3.
+            loss_weights (dict[str, float], optional): Loss weights for the different components.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
+            focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -227,7 +231,25 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         super().__init__()
+
+        # Set default focal length if not provided
+        if focal_length is None:
+            focal_length = width / 2
+
         self.save_hyperparameters()
+
+        # Create default camera intrinsic matrix
+        self.register_buffer(
+            "intrinsic_matrix",
+            torch.tensor(
+                [
+                    [focal_length, 0, width / 2],
+                    [0, focal_length, height / 2],
+                    [0, 0, 1],
+                ],
+                dtype=torch.float32,
+            ),
+        )
 
         # MViT encoder
         if pretrained:
@@ -245,8 +267,8 @@ class VideoMANORegressor(pl.LightningModule):
         # Remove the classification head
         self.backbone.head = nn.Identity()
 
-        # Regressors for left and right hands
-        self.regressor_left = nn.Sequential(
+        # Regressors for left (only) hand
+        self.regressor = nn.Sequential(
             nn.Linear(backbone_out_features, 1024),
             nn.ReLU(),
             nn.Linear(1024, 2048),
@@ -254,13 +276,6 @@ class VideoMANORegressor(pl.LightningModule):
             nn.Linear(2048, mano_params * num_frames),
         )
 
-        self.regressor_right = nn.Sequential(
-            nn.Linear(backbone_out_features, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 2048),
-            nn.ReLU(),
-            nn.Linear(2048, mano_params * num_frames),
-        )
         self.mano_left = ManoLayer(
             mano_root=mano_root,
             ncomps=ncomps,
@@ -270,15 +285,6 @@ class VideoMANORegressor(pl.LightningModule):
         )
         self.mano_left.requires_grad_(requires_grad=False)
 
-        self.mano_right = ManoLayer(
-            mano_root=mano_root,
-            ncomps=ncomps,
-            use_pca=use_pca,
-            flat_hand_mean=flat_hand_mean,
-            side="right",
-        )
-        self.mano_right.requires_grad_(requires_grad=False)
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
 
@@ -286,248 +292,195 @@ class VideoMANORegressor(pl.LightningModule):
             x (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
 
         Returns:
-            torch.Tensor: Predicted MANO parameters.
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing:
+                - Predicted MANO parameters
+                - Predicted 3D hand joints
+                - Predicted 2D hand joints
 
         """
         features = self.backbone(x)
-        left_hand_params = self.regressor_left(features)
-        right_hand_params = self.regressor_right(features)
+        hand_params = self.regressor(features)
 
         # Reshape the outputs
-        left_hand_params = left_hand_params.view(x.shape[0], -1, self.hparams.mano_params)
-        right_hand_params = right_hand_params.view(x.shape[0], -1, self.hparams.mano_params)
+        hand_params = hand_params.view(x.shape[0], -1, self.hparams.mano_params)
 
-        left_hand_joints, right_hand_joints = get_mano_joints(
-            left_hand_params,
-            right_hand_params,
+        hand_joints = get_mano_joints(
+            hand_params,
             self.mano_left,
-            self.mano_right,
         )
 
-        return left_hand_params, right_hand_params, left_hand_joints, right_hand_joints
+        # Project 3D joints to 2D using predicted translation
+        mano_trans = hand_params[..., :3].unsqueeze(2)
+
+        # Predict reverse depth
+        mano_trans[..., 2] = self.hparams.focal_length / (mano_trans[..., 2] + 1e-9)
+
+        # Scale to milimeters
+        mano_trans = mano_trans * 1000
+        hand_joints_2d = project_joints_to_2d(
+            hand_joints + mano_trans,
+            self.intrinsic_matrix,
+        )
+
+        return hand_params, hand_joints, hand_joints_2d
 
     def loss_function(
         self,
-        y_pred_left: torch.Tensor,
-        y_pred_right: torch.Tensor,
-        y_true_left: torch.Tensor,
-        y_true_right: torch.Tensor,
-        pred_left_hand_joints: torch.Tensor,
-        pred_right_hand_joints: torch.Tensor,
-        true_left_hand_joints: torch.Tensor,
-        true_right_hand_joints: torch.Tensor,
-        pred_keypoints_2d_left: torch.Tensor,
-        pred_keypoints_2d_right: torch.Tensor,
-        true_keypoints_2d_left: torch.Tensor,
-        true_keypoints_2d_right: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        pred_hand_joints: torch.Tensor,
+        true_hand_joints: torch.Tensor,
+        pred_keypoints_2d: torch.Tensor,
+        true_keypoints_2d: torch.Tensor,
+    ) -> torch.Tensor:
         """Calculate the loss for the model.
 
-        The loss function consists of three components for each hand:
+        The loss function consists of three components:
         1. Pose loss: MSE between predicted and ground truth pose parameters (first 45 values).
         2. Shape loss: MSE between predicted and ground truth shape parameters (last 10 values).
         3. Keypoints loss: L1 loss between predicted and ground truth 3D hand joints.
 
-        The total loss for each hand is the sum of these three components.
+        The total loss is the sum of these three components.
 
         Args:
-            y_pred_left (torch.Tensor): Predicted MANO parameters for left hand.
-            y_pred_right (torch.Tensor): Predicted MANO parameters for right hand.
-            y_true_left (torch.Tensor): Ground truth MANO parameters for left hand.
-            y_true_right (torch.Tensor): Ground truth MANO parameters for right hand.
-            pred_left_hand_joints (torch.Tensor): Predicted 3D keypoints for left hand.
-            pred_right_hand_joints (torch.Tensor): Predicted 3D keypoints for right hand.
-            true_left_hand_joints (torch.Tensor): Ground truth 3D keypoints for left hand.
-            true_right_hand_joints (torch.Tensor): Ground truth 3D keypoints for right hand.
-            pred_keypoints_2d_left (torch.Tensor): Predicted 2D keypoints for left hand.
-            pred_keypoints_2d_right (torch.Tensor): Predicted 2D keypoints for right hand.
-            true_keypoints_2d_left (torch.Tensor): Ground truth 2D keypoints for left hand.
-            true_keypoints_2d_right (torch.Tensor): Ground truth 2D keypoints for right hand.
+            y_pred (torch.Tensor): Predicted MANO parameters.
+            y_true (torch.Tensor): Ground truth MANO parameters.
+            pred_hand_joints (torch.Tensor): Predicted 3D keypoints.
+            true_hand_joints (torch.Tensor): Ground truth 3D keypoints.
+            pred_keypoints_2d (torch.Tensor): Predicted 2D keypoints.
+            true_keypoints_2d (torch.Tensor): Ground truth 2D keypoints.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor]: The computed losses for left and right hands.
+            torch.Tensor: The computed loss.
 
         """
-        # Left hand loss
-        pose_loss_left = F.mse_loss(y_pred_left[..., 3:51], y_true_left[..., 3:51])
-        shape_loss_left = F.mse_loss(y_pred_left[..., -10:], y_true_left[..., -10:])
-        keypoints_loss_left = F.l1_loss(pred_left_hand_joints, true_left_hand_joints)
-        # keypoints_2d_loss_left = F.l1_loss(pred_keypoints_2d_left, true_keypoints_2d_left)
-        # left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left + keypoints_2d_loss_left
-        left_hand_loss = pose_loss_left + shape_loss_left + keypoints_loss_left
+        global_orientation_loss = F.mse_loss(y_pred[..., 3:6], y_true[..., 3:6])
+        pose_loss = F.mse_loss(y_pred[..., 6:51], y_true[..., 6:51])
+        shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
+        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
+        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
 
-        # Right hand loss
-        pose_loss_right = F.mse_loss(y_pred_right[..., 3:51], y_true_right[..., 3:51])
-        shape_loss_right = F.mse_loss(y_pred_right[..., -10:], y_true_right[..., -10:])
-        keypoints_loss_right = F.l1_loss(pred_right_hand_joints, true_right_hand_joints)
-        # keypoints_2d_loss_right = F.l1_loss(pred_keypoints_2d_right, true_keypoints_2d_right)
-        # right_hand_loss = pose_loss_right + shape_loss_right + keypoints_loss_right + keypoints_2d_loss_right
-        right_hand_loss = pose_loss_right + shape_loss_right + keypoints_loss_right
+        if self.hparams.loss_weights is None:
+            losses = {
+                "global_orientation": global_orientation_loss,
+                "pose": pose_loss,
+                "shape": shape_loss,
+                "keypoints_3d": keypoints_loss,
+                "keypoints_2d": keypoints_2d_loss,
+            }
+        else:
+            losses = {
+                "global_orientation": self.hparams.loss_weights["global_orientation"] * global_orientation_loss,
+                "pose": self.hparams.loss_weights["pose"] * pose_loss,
+                "shape": self.hparams.loss_weights["shape"] * shape_loss,
+                "keypoints_3d": self.hparams.loss_weights["keypoints_3d"] * keypoints_loss,
+                "keypoints_2d": self.hparams.loss_weights["keypoints_2d"] * keypoints_2d_loss,
+            }
 
-        return left_hand_loss, right_hand_loss
+        losses["loss"] = sum(losses.values())
+        return losses
 
-    def training_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> torch.Tensor:  # noqa: ARG002
+    def training_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,  # noqa: ARG002
+    ) -> torch.Tensor:
         """Training step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor]): A tuple containing input video frames and target MANO parameters.
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+                - Input video frames (B, T, C, H, W)
+                - Target MANO parameters (B, T, 61)
+                - Target 3D joints (B, T, J, 3)
+                - Target 2D joints (B, T, J, 2)
             batch_idx (int): Index of the batch.
 
         Returns:
             torch.Tensor: Loss value.
 
         """
-        x, y_left, y_right, intrinsic_matrix = batch
+        x, y, true_hand_joints, true_keypoints_2d = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred_left, y_pred_right, pred_left_hand_joints, pred_right_hand_joints = self(x)
-        true_left_hand_joints, true_right_hand_joints = get_mano_joints(
-            y_left,
-            y_right,
-            self.mano_left,
-            self.mano_right,
-        )
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
 
-        # Project 3D joints to 2D
-        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
-        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
-
-        left_loss, right_loss = self.loss_function(
-            y_pred_left,
-            y_pred_right,
-            y_left,
-            y_right,
-            pred_left_hand_joints,
-            pred_right_hand_joints,
-            true_left_hand_joints,
-            true_right_hand_joints,
-            pred_keypoints_2d_left,
-            pred_keypoints_2d_right,
-            true_keypoints_2d_left,
-            true_keypoints_2d_right,
+        losses = self.loss_function(
+            y_pred,
+            y,
+            pred_hand_joints,
+            true_hand_joints,
+            pred_keypoints_2d,
+            true_keypoints_2d,
         )
-        loss = left_loss + right_loss
+        loss = losses["loss"]
 
         # Additional metrics
-        left_mje = torch.linalg.vector_norm(pred_left_hand_joints - true_left_hand_joints, dim=-1).mean(dim=-1).mean()
-        right_mje = (
-            torch.linalg.vector_norm(pred_right_hand_joints - true_right_hand_joints, dim=-1).mean(dim=-1).mean()
-        )
-        left_mje_2d = (
-            torch.linalg.vector_norm(pred_keypoints_2d_left - true_keypoints_2d_left, dim=-1).mean(dim=-1).mean()
-        )
-        right_mje_2d = (
-            torch.linalg.vector_norm(pred_keypoints_2d_right - true_keypoints_2d_right, dim=-1).mean(dim=-1).mean()
-        )
+        mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
+        mje_2d = torch.linalg.vector_norm(pred_keypoints_2d - true_keypoints_2d, dim=-1).mean(dim=-1).mean()
+        mse = F.mse_loss(y_pred, y)
+        mae = F.l1_loss(y_pred, y)
+        pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        left_mse = F.mse_loss(y_pred_left, y_left)
-        right_mse = F.mse_loss(y_pred_right, y_right)
-        left_mae = F.l1_loss(y_pred_left, y_left)
-        right_mae = F.l1_loss(y_pred_right, y_right)
-
-        left_pamje = reconstruction_error(pred_left_hand_joints, true_left_hand_joints)
-        right_pamje = reconstruction_error(pred_right_hand_joints, true_right_hand_joints)
-
-        self.log("train/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_left_pamje", left_pamje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_right_pamje", right_pamje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("train/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        for key, value in losses.items():
+            self.log(f"train/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
-    def validation_step(self, batch: tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:  # noqa: ARG002
+    def validation_step(
+        self,
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch_idx: int,  # noqa: ARG002
+    ) -> None:
         """Validation step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor]): A tuple containing input video frames and target MANO parameters.
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+                - Input video frames (B, T, C, H, W)
+                - Target MANO parameters (B, T, 61)
+                - Target 3D joints (B, T, J, 3)
+                - Target 2D joints (B, T, J, 2)
             batch_idx (int): Index of the batch.
 
         """
-        x, y_left, y_right, intrinsic_matrix = batch
+        x, y, true_hand_joints, true_keypoints_2d = batch
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred_left, y_pred_right, pred_left_hand_joints, pred_right_hand_joints = self(x)
-        true_left_hand_joints, true_right_hand_joints = get_mano_joints(
-            y_left,
-            y_right,
-            self.mano_left,
-            self.mano_right,
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
+
+        losses = self.loss_function(
+            y_pred,
+            y,
+            pred_hand_joints,
+            true_hand_joints,
+            pred_keypoints_2d,
+            true_keypoints_2d,
         )
-
-        # Project 3D joints to 2D
-        true_keypoints_2d_left = project_joints_to_2d(true_left_hand_joints, intrinsic_matrix)
-        true_keypoints_2d_right = project_joints_to_2d(true_right_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_left = project_joints_to_2d(pred_left_hand_joints, intrinsic_matrix)
-        pred_keypoints_2d_right = project_joints_to_2d(pred_right_hand_joints, intrinsic_matrix)
-
-        left_loss, right_loss = self.loss_function(
-            y_pred_left,
-            y_pred_right,
-            y_left,
-            y_right,
-            pred_left_hand_joints,
-            pred_right_hand_joints,
-            true_left_hand_joints,
-            true_right_hand_joints,
-            pred_keypoints_2d_left,
-            pred_keypoints_2d_right,
-            true_keypoints_2d_left,
-            true_keypoints_2d_right,
-        )
-        loss = left_loss + right_loss
-
+        loss = losses["loss"]
         # Additional metrics
-        left_mje = torch.linalg.vector_norm(pred_left_hand_joints - true_left_hand_joints, dim=-1).mean(dim=-1).mean()
-        right_mje = (
-            torch.linalg.vector_norm(pred_right_hand_joints - true_right_hand_joints, dim=-1).mean(dim=-1).mean()
-        )
-        left_mje_2d = (
-            torch.linalg.vector_norm(pred_keypoints_2d_left - true_keypoints_2d_left, dim=-1).mean(dim=-1).mean()
-        )
-        right_mje_2d = (
-            torch.linalg.vector_norm(pred_keypoints_2d_right - true_keypoints_2d_right, dim=-1).mean(dim=-1).mean()
-        )
+        mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
+        mje_2d = torch.linalg.vector_norm(pred_keypoints_2d - true_keypoints_2d, dim=-1).mean(dim=-1).mean()
+        mse = F.mse_loss(y_pred, y)
+        mae = F.l1_loss(y_pred, y)
+        pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        left_mse = F.mse_loss(y_pred_left, y_left)
-        right_mse = F.mse_loss(y_pred_right, y_right)
-        left_mae = F.l1_loss(y_pred_left, y_left)
-        right_mae = F.l1_loss(y_pred_right, y_right)
-
-        left_pamje = reconstruction_error(pred_left_hand_joints, true_left_hand_joints)
-        right_pamje = reconstruction_error(pred_right_hand_joints, true_right_hand_joints)
-
-        self.log("val/left_loss", left_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/right_loss", right_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/mean_left_mse", left_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mse", right_mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_mae", left_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mae", right_mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_mje", left_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mje", right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje", left_mje + right_mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_mje_2d", left_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_mje_2d", right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje_2d", left_mje_2d + right_mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_left_pamje", left_pamje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_right_pamje", right_pamje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
+        self.log("val/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        for key, value in losses.items():
+            self.log(f"val/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.

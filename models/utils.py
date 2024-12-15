@@ -10,6 +10,38 @@ from manopth.manolayer import ManoLayer
 
 
 def get_mano_joints(
+    mano_params: torch.Tensor,
+    mano: ManoLayer,
+) -> torch.Tensor:
+    """Execute the MANO model to generate hand joints.
+
+    Args:
+        mano_params (torch.Tensor): Tensor containing MANO parameters for the hand.
+            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
+        mano (ManoLayer): MANO model for the hand.
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size, num_joints, 3) of hand joints without translation
+
+    """
+    # Get the device of mano_params
+    batch_size = mano_params.shape[0]
+    num_frames = mano_params.shape[1]
+
+    # Push the time dimension in the batch dimension
+    params = mano_params.view(-1, mano_params.shape[2])
+
+    # Process hand without translation
+    _, hand_joints = mano(
+        params[:, 3:51],  # pose
+        params[:, 51:],  # shape
+    )
+
+    # Reshape the joints to match the original batch size and time dimension
+    return hand_joints.view(batch_size, num_frames, -1, 3)
+
+
+def get_mano_joints_both_hands(
     mano_params_left: torch.Tensor,
     mano_params_right: torch.Tensor,
     mano_left: ManoLayer,
@@ -68,7 +100,7 @@ def project_joints_to_2d(
 
     Args:
         joints_3d (torch.Tensor): 3D joint coordinates with shape (batch_size, num_frames, num_joints, 3)
-        intrinsic_matrix (torch.Tensor): Camera intrinsic matrix with shape (batch_size, 3, 3)
+        intrinsic_matrix (torch.Tensor): Camera intrinsic matrix with shape (3, 3) or (batch_size, 3, 3)
 
     Returns:
         torch.Tensor: 2D joint coordinates with shape (batch_size, num_frames, num_joints, 2)
@@ -76,32 +108,30 @@ def project_joints_to_2d(
     """
     batch_size, num_frames, num_joints, _ = joints_3d.shape
 
-    # Project 3D keypoints to 2D for each batch
-    keypoints_2d = []
-    for b in range(batch_size):
-        batch_keypoints = []
-        # Get intrinsic matrix for this batch
-        batch_intrinsics = intrinsic_matrix[b]
+    # Reshape joints to combine batch and frames dimensions
+    joints_3d = joints_3d.view(batch_size * num_frames, num_joints, 3)
 
-        # Process each frame in the batch
-        for f in range(num_frames):
-            # Get joints for this frame
-            joints_f = joints_3d[b, f]  # Shape: (num_joints, 3)
+    # Handle both single and batched intrinsic matrices
+    if intrinsic_matrix.dim() == 2:  # noqa: PLR2004
+        # Single intrinsic matrix - expand to match batch size
+        intrinsic_matrix = intrinsic_matrix.unsqueeze(0).expand(batch_size * num_frames, -1, -1)
+    else:
+        # Batched intrinsic matrix - repeat for each frame
+        intrinsic_matrix = intrinsic_matrix.unsqueeze(1).repeat(1, num_frames, 1, 1)
+        intrinsic_matrix = intrinsic_matrix.view(batch_size * num_frames, 3, 3)
 
-            # Transpose joints to match matrix multiplication dimensions
-            joints_f = joints_f.transpose(0, 1)  # Shape: (3, num_joints)
+    # Transpose joints for matrix multiplication
+    joints_3d = joints_3d.transpose(1, 2)  # Shape: (batch_size * num_frames, 3, num_joints)
 
-            # Matrix multiply with intrinsic matrix
-            keypoints_2d_temp = torch.matmul(batch_intrinsics, joints_f).transpose(0, 1)
+    # Project all points at once
+    projected = torch.bmm(intrinsic_matrix, joints_3d)  # Shape: (batch_size * num_frames, 3, num_joints)
+    projected = projected.transpose(1, 2)  # Shape: (batch_size * num_frames, num_joints, 3)
 
-            # Divide by z coordinates for perspective projection
-            batch_keypoints.append(keypoints_2d_temp[..., :2] / keypoints_2d_temp[..., 2:])
+    # Perspective division
+    keypoints_2d = projected[..., :2] / projected[..., 2:3]
 
-        # Stack frames for this batch
-        keypoints_2d.append(torch.stack(batch_keypoints))
-
-    # Stack all batches
-    return torch.stack(keypoints_2d)  # Shape: (batch_size, num_frames, num_joints, 2)
+    # Restore batch and frames dimensions
+    return keypoints_2d.view(batch_size, num_frames, num_joints, 2)
 
 
 def compute_similarity_transform(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:

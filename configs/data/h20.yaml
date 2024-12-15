@@ -1,9 +1,9 @@
-dataset_prefix: "/cluster/project/cvg/data/H2O"
-max_width: 256
-max_height: 256
+dataset_prefix: "/cluster/project/cvg/students/mzamboni/data/H2O"
 resolution: "16x9"
 num_frames: 32
 pretrained: False
+crop_size: 224
+padding_factor: 2
 cameras:
   - "cam0"
   - "cam1"

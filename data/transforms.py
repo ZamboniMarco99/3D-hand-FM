@@ -71,25 +71,21 @@ class VideoColorJitter(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
+        mano: Tensor,
         intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the VideoColorJitter transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
             intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
 
         Returns:
             tuple: A tuple containing:
                 - video (Tensor): Color jittered video tensor
-                - mano_left (Tensor): Unchanged left hand MANO parameters
-                - mano_right (Tensor): Unchanged right hand MANO parameters
+                - mano (Tensor): Unchanged MANO parameters
                 - intrinsic_matrix (Tensor, optional): Unchanged camera intrinsic matrix
 
         """
@@ -118,7 +114,7 @@ class VideoColorJitter(nn.Module):
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mano, intrinsic_matrix
 
 
 class VideoRandomRotation(nn.Module):
@@ -142,25 +138,21 @@ class VideoRandomRotation(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
+        mano: Tensor,
         intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the RandomRotation transform.
 
         Args:
             video (Tensor): Video tensor of shape (T,C,H,W) or (N,T,C,H,W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
             intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
 
         Returns:
             tuple: A tuple containing:
                 - video (Tensor): Rotated video tensor
-                - mano_left (Tensor): Rotated left hand MANO parameters
-                - mano_right (Tensor): Rotated right hand MANO parameters
+                - mano (Tensor): Rotated MANO parameters
                 - intrinsic_matrix (Tensor, optional): Transformed camera intrinsic matrix
 
         """
@@ -228,15 +220,14 @@ class VideoRandomRotation(nn.Module):
                 torch.matmul(rot_mat, torch.matmul(translate_to_origin, intrinsic_matrix)),
             )
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mano, intrinsic_matrix
 
 
 class VideoMirror(nn.Module):
     """Mirror video frames and adjust MANO parameters accordingly.
 
     This transform horizontally flips the video frames and updates the MANO parameters
-    to maintain consistency with the mirrored view. It also adjusts the camera intrinsics
-    if provided.
+    to maintain consistency with the mirrored view.
     """
 
     def __init__(self, p: float = 0.5) -> None:
@@ -252,30 +243,26 @@ class VideoMirror(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano_left: Tensor,
-        mano_right: Tensor,
-        intrinsic_matrix: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
+        mano: Tensor,
+        joints_2d: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor | None]:
         """Forward pass of the VideoMirror transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
-            mano_left (Tensor): Left hand MANO parameters with shape (T, 61)
+            mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
-            mano_right (Tensor): Right hand MANO parameters with shape (T, 61)
-                containing translation, pose and shape parameters
-            intrinsic_matrix (Tensor, optional): Camera intrinsic matrix with shape (3, 3)
+            joints_2d (Tensor | None): 2D joint coordinates with shape (T, J, 2)
 
         Returns:
-            tuple[Tensor, Tensor, Tensor, Tensor | None]: Tuple containing:
+            tuple[Tensor, Tensor, Tensor | None]: Tuple containing:
                 - Mirrored video tensor
-                - Updated left hand MANO parameters
-                - Updated right hand MANO parameters
-                - Updated camera intrinsic matrix (if provided)
+                - Updated MANO parameters
+                - Updated 2D joint coordinates (if provided)
 
         """
         if random.random() > self.p:
-            return video, mano_left, mano_right, intrinsic_matrix
+            return video, mano, joints_2d
 
         # Handle both batched and unbatched videos
         need_squeeze = False
@@ -286,26 +273,30 @@ class VideoMirror(nn.Module):
         # Mirror the video frames
         video = torch.flip(video, dims=[-1])
 
-        # Swap left and right hand parameters
-        mano_left, mano_right = mano_right.clone(), mano_left.clone()
-
         # Mirror the translation parameters (x coordinate)
-        mano_left[..., 0] *= -1
-        mano_right[..., 0] *= -1
+        mirrored_mano = mano.clone()
+        mirrored_mano[..., 0] *= -1
 
         # Mirror relevant pose parameters
-        # For both hands: negate parameters controlling left-right rotation
-        mano_left[..., 4:51:3] *= -1
-        mano_right[..., 5:51:3] *= -1
+        # Negate x and z components of rotations
+        mirrored_mano[..., 4:51:3] *= -1
+        mirrored_mano[..., 5:51:3] *= -1
+
+        # Mirror 2D joint coordinates if provided
+        if joints_2d is not None:
+            # Get width of video for mirroring x coordinates
+            width = video.shape[-1]
+            # Mirror x coordinates (first dimension of joints)
+            joints_2d[..., 0] = width - joints_2d[..., 0]
 
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mano_left, mano_right, intrinsic_matrix
+        return video, mirrored_mano, joints_2d
 
 
 class CropHand:
-    """Transform to crop hand from video frames based on bounding box coordinates."""
+    """Transform to crop hand from video frames."""
 
     def __init__(self, output_size: int = 224, padding_factor: float = 1.2) -> None:
         """Initialize the CropHand transform.
@@ -379,53 +370,47 @@ class CropHand:
     def __call__(
         self,
         video: Tensor,
-        mano_params: Tensor,
-        bbox: Tensor,  # Shape: (B, T, 4) for [x_min, y_min, x_max, y_max]
-        intrinsic_matrix: Tensor,
-    ) -> tuple[Tensor, Tensor, Tensor]:
+        bbox: Tensor,
+        keypoints_2d: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor | None]:
         """Apply hand cropping transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (B, T, C, H, W)
-            mano_params (Tensor): MANO parameters of shape (T, 61) or (B, T, 61)
             bbox (Tensor): Hand bounding boxes for each frame
-            intrinsic_matrix (Tensor): Camera intrinsic matrix of shape (3, 3) or (B, 3, 3)
+            keypoints_2d (Tensor | None): Optional 2D keypoints of shape (T, N, 2) or (B, T, N, 2)
 
         Returns:
-            tuple[Tensor, Tensor, Tensor]: Cropped and resized video, shifted MANO parameters,
-                and updated intrinsic matrix
+            tuple[Tensor, Tensor | None]: Cropped and resized video and transformed 2D keypoints if provided
 
         """
         # Handle both batched and unbatched inputs
         need_squeeze = False
         if video.dim() == 4:  # noqa: PLR2004
             video = video.unsqueeze(0)
-            mano_params = mano_params.unsqueeze(0)
             bbox = bbox.unsqueeze(0)
-            intrinsic_matrix = intrinsic_matrix.unsqueeze(0)
+            if keypoints_2d is not None:
+                keypoints_2d = keypoints_2d.unsqueeze(0)
             need_squeeze = True
 
         # Get dimensions
         b, t, c, h, w = video.shape
 
-        # Initialize output tensors for each batch
+        # Initialize output tensors
         video_crops = []
-        mano_params_shifted = mano_params.clone()
-        intrinsic_matrices = []
+        keypoints_2d_updated = [] if keypoints_2d is not None else None
 
         # Process each batch independently
         for batch_idx in range(b):
             batch_crops = []
-            batch_intrinsics = []
+            batch_keypoints = [] if keypoints_2d is not None else None
 
             # Process each frame in the batch
             for time_idx in range(t):
-                # Get crop for current frame
+                # Get crop coordinates
                 crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
-                crop_size = crop[2] - crop[0]  # Square crop so width = height
-                scale_factor = self.output_size / crop_size
 
-                # Crop and resize the current frame
+                # Crop and resize frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
                 frame_resized = torch.nn.functional.interpolate(
                     frame_crop.unsqueeze(0),
@@ -435,43 +420,29 @@ class CropHand:
                 ).squeeze(0)
                 batch_crops.append(frame_resized)
 
-                # Shift and scale MANO translation parameters to new coordinate system
-                # MANO uses first 3 parameters for translation (x,y,z)
-                mano_params_shifted[batch_idx, time_idx, 0] = (
-                    mano_params_shifted[batch_idx, time_idx, 0] - crop[0]
-                ) * scale_factor
-                mano_params_shifted[batch_idx, time_idx, 1] = (
-                    mano_params_shifted[batch_idx, time_idx, 1] - crop[1]
-                ) * scale_factor
-                mano_params_shifted[batch_idx, time_idx, 2] = (
-                    mano_params_shifted[batch_idx, time_idx, 2] * scale_factor
-                )  # Scale z coordinate
+                # Transform 2D keypoints if provided
+                if keypoints_2d is not None:
+                    keypoints_t = keypoints_2d[batch_idx, time_idx].clone()
+                    # Adjust for crop offset
+                    keypoints_t[..., 0] -= crop[0]
+                    keypoints_t[..., 1] -= crop[1]
+                    # Scale to new size
+                    scale = self.output_size / (crop[2] - crop[0])
+                    keypoints_t *= scale
+                    batch_keypoints.append(keypoints_t)
 
-                # Create copy for current frame
-                intrinsic_t = intrinsic_matrix[batch_idx].clone()
-
-                # Adjust principal point for crop and scaling
-                intrinsic_t[0, 2] = (intrinsic_t[0, 2] - crop[0]) * scale_factor
-                intrinsic_t[1, 2] = (intrinsic_t[1, 2] - crop[1]) * scale_factor
-
-                # Scale focal length
-                intrinsic_t[0, 0] *= scale_factor
-                intrinsic_t[1, 1] *= scale_factor
-
-                batch_intrinsics.append(intrinsic_t)
-
-            # Stack frames for current batch
+            # Stack frames and parameters for current batch
             video_crops.append(torch.stack(batch_crops))
-            intrinsic_matrices.append(torch.stack(batch_intrinsics))
+            if keypoints_2d is not None:
+                keypoints_2d_updated.append(torch.stack(batch_keypoints))
 
         # Stack all batches
-        video_cropped = torch.stack(video_crops)  # (B, T, C, output_size, output_size)
+        video_cropped = torch.stack(video_crops)
+        keypoints_2d_cropped = torch.stack(keypoints_2d_updated) if keypoints_2d is not None else None
 
         if need_squeeze:
             video_cropped = video_cropped.squeeze(0)
-            mano_params_shifted = mano_params_shifted.squeeze(0)
-            intrinsic_matrices = intrinsic_matrices[0]
-        else:
-            intrinsic_matrices = torch.stack(intrinsic_matrices)  # (B, T, 3, 3)
+            if keypoints_2d_cropped is not None:
+                keypoints_2d_cropped = keypoints_2d_cropped.squeeze(0)
 
-        return video_cropped, mano_params_shifted, intrinsic_matrices
+        return video_cropped, keypoints_2d_cropped

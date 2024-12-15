@@ -12,10 +12,15 @@ log_level: INFO
 
 model:
   learning_rate: 1e-3
+  loss_weights:
+    keypoints_3d: 0.01
+    keypoints_2d: 0.01
+    global_orientation: 1
+    pose: 1
+    shape: 1
 
 transforms:
   - VideoColorJitter
-  - VideoRandomRotation
 
 logger:
   name: "run_pretrained"
