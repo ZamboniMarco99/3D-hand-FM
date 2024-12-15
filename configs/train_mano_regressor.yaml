@@ -18,11 +18,11 @@ model:
     global_orientation: 1
     pose: 1
     shape: 1
+  sixd: True
+  mano_params: 109
 
 transforms:
   - VideoColorJitter
-  sixd: True
-  mano_params: 109
 
 logger:
   name: "run_pretrained"
