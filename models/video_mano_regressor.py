@@ -322,9 +322,9 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         features = self.backbone(x)
-        trans_params = self.regressor_trans(features)
-        pose_params = self.regressor_pose(features)
-        shape_params = self.regressor_shape(features)
+        trans_params = self.regressor_trans(features).reshape(x.shape[0], -1, self.num_trans_params)
+        pose_params = self.regressor_pose(features).reshape(x.shape[0], -1, self.num_pose_params)
+        shape_params = self.regressor_shape(features).reshape(x.shape[0], -1, self.num_shape_params)
 
         # Reshape the outputs
         hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
