@@ -273,13 +273,24 @@ class VideoMANORegressor(pl.LightningModule):
         # Remove the classification head
         self.backbone.head = nn.Identity()
 
-        # Regressors for left (only) hand
-        self.regressor = nn.Sequential(
-            nn.Linear(backbone_out_features, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 2048),
-            nn.ReLU(),
-            nn.Linear(2048, mano_params * num_frames),
+        self.num_trans_params = 3
+        self.num_shape_params = 10
+        if sixd:
+            self.num_pose_params = 96
+        else:
+            self.num_pose_params = 45
+
+        # Regressors for parameters
+        self.regressor_trans = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
+        )
+
+        self.regressor_pose = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+        )
+
+        self.regressor_shape = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
         )
 
         self.mano_model = ManoLayer(
@@ -311,10 +322,12 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         features = self.backbone(x)
-        hand_params = self.regressor(features)
+        trans_params = self.regressor_trans(features)
+        pose_params = self.regressor_pose(features)
+        shape_params = self.regressor_shape(features)
 
         # Reshape the outputs
-        hand_params = hand_params.view(x.shape[0], -1, self.hparams.mano_params)
+        hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
 
         # Add mean MANO parameters
         final_hand_params = hand_params + torch.concat(
