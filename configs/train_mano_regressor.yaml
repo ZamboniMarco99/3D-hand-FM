@@ -20,6 +20,7 @@ model:
     shape: 1
   sixd: True
   mano_params: 109
+  mean_mano_params_location: "./external/mano_mean_params.npz"
 
 transforms:
   - VideoColorJitter

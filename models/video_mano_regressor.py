@@ -11,6 +11,7 @@ Example usage:
     trainer.fit(model, train_dataloader, val_dataloader)
 """
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from manopth.manolayer import ManoLayer
@@ -209,6 +210,7 @@ class VideoMANORegressor(pl.LightningModule):
         pretrained: bool = False,
         focal_length: float | None = None,
         sixd: bool = False,
+        mean_mano_params_location: str = "./external/mean_mano_params.npz",
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -226,6 +228,7 @@ class VideoMANORegressor(pl.LightningModule):
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
             sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
+            mean_mano_params_location (str, optional): Location of the mean MANO parameters.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -239,6 +242,7 @@ class VideoMANORegressor(pl.LightningModule):
             focal_length = width / 2
 
         self.save_hyperparameters()
+        self.sixd = sixd
 
         # Create default camera intrinsic matrix
         self.register_buffer(
@@ -286,7 +290,12 @@ class VideoMANORegressor(pl.LightningModule):
             side="right",
         )
         self.mano_model.requires_grad_(requires_grad=False)
-        self.sixd = sixd
+
+        # Load mean MANO parameters
+        mean_mano_params = np.load(mean_mano_params_location)
+        self.register_buffer("init_pose", torch.tensor(mean_mano_params["pose"], dtype=torch.float32))
+        self.register_buffer("init_shape", torch.tensor(mean_mano_params["shape"], dtype=torch.float32))
+        self.register_buffer("init_trans", torch.tensor(mean_mano_params["cam"], dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
@@ -307,14 +316,20 @@ class VideoMANORegressor(pl.LightningModule):
         # Reshape the outputs
         hand_params = hand_params.view(x.shape[0], -1, self.hparams.mano_params)
 
+        # Add mean MANO parameters
+        final_hand_params = hand_params + torch.concat(
+            (self.init_trans, self.init_pose, self.init_shape),
+            dim=-1,
+        )
+
         hand_joints = get_mano_joints(
-            hand_params,
+            final_hand_params,
             self.mano_model,
             self.sixd,
         )
 
         # Project 3D joints to 2D using predicted translation
-        mano_trans = hand_params[..., :3].unsqueeze(2)
+        mano_trans = final_hand_params[..., :3].unsqueeze(2)
 
         # Predict reverse depth
         mano_trans[..., 2] = self.hparams.focal_length / (mano_trans[..., 2] + 1e-9)
@@ -326,7 +341,7 @@ class VideoMANORegressor(pl.LightningModule):
             self.intrinsic_matrix,
         )
 
-        return hand_params, hand_joints, hand_joints_2d
+        return final_hand_params, hand_joints, hand_joints_2d
 
     def loss_function(
         self,

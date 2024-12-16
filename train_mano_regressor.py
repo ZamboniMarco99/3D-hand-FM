@@ -60,6 +60,7 @@ def main(cfg: DictConfig) -> None:
         pretrained=cfg.data.pretrained,
         mano_params=cfg.model.mano_params,
         sixd=cfg.model.sixd,
+        mean_mano_params_location=cfg.model.mean_mano_params_location,
     )
     logger.info("Model initialized")
 
