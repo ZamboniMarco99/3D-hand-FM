@@ -204,7 +204,7 @@ class VideoMANORegressor(pl.LightningModule):
         ncomps: int = 45,
         use_pca: bool = False,
         flat_hand_mean: bool = True,
-        mano_params: int = 61,  # Single hand, 61 parameters
+        mano_params: int = 61,  # noqa: ARG002
         learning_rate: float = 1e-3,  # noqa: ARG002
         loss_weights: dict[str, float] | None = None,  # noqa: ARG002
         pretrained: bool = False,
