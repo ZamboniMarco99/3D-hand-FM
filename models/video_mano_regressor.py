@@ -387,17 +387,35 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         end_global_orientation = 9 if self.sixd else 6
-        global_orientation_loss = F.mse_loss(
-            y_pred[..., 3:end_global_orientation],
-            y_true[..., 3:end_global_orientation],
+        global_orientation_loss = (
+            F.mse_loss(
+                y_pred[..., 3:end_global_orientation],
+                y_true[..., 3:end_global_orientation],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
         )
-        pose_loss = F.mse_loss(
-            y_pred[..., end_global_orientation:-10],
-            y_true[..., end_global_orientation:-10],
+        pose_loss = (
+            F.mse_loss(
+                y_pred[..., end_global_orientation:-10],
+                y_true[..., end_global_orientation:-10],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
         )
-        shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
-        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
-        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
+        shape_loss = (
+            F.mse_loss(
+                y_pred[..., -10:],
+                y_true[..., -10:],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
+        )
+        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints, reduction="none").sum(dim=(-1, -2)).mean()
+        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d, reduction="none").sum(dim=(-1, -2)).mean()
 
         if self.hparams.loss_weights is None:
             losses = {
