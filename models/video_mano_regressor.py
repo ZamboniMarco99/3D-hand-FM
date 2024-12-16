@@ -278,14 +278,14 @@ class VideoMANORegressor(pl.LightningModule):
             nn.Linear(2048, mano_params * num_frames),
         )
 
-        self.mano_left = ManoLayer(
+        self.mano_model = ManoLayer(
             mano_root=mano_root,
             ncomps=ncomps,
             use_pca=use_pca,
             flat_hand_mean=flat_hand_mean,
-            side="left",
+            side="right",
         )
-        self.mano_left.requires_grad_(requires_grad=False)
+        self.mano_model.requires_grad_(requires_grad=False)
         self.sixd = sixd
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -309,7 +309,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         hand_joints = get_mano_joints(
             hand_params,
-            self.mano_left,
+            self.mano_model,
             self.sixd,
         )
 

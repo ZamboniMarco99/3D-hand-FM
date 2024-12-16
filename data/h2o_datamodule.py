@@ -141,7 +141,8 @@ class H2ODataset(Dataset):
                             [fx, 0, cx],
                             [0, fy, cy],
                             [0, 0, 1],
-                        ], dtype=np.float32,
+                        ],
+                        dtype=np.float32,
                     )
                     self.camera_intrinsics.append(intrinsics)
 
@@ -424,7 +425,7 @@ class H2ODataset(Dataset):
             bbox_current,
             joints_2d_current,
         )
-        if return_right_hand:
+        if not return_right_hand:
             clip_current, mano_current, joints_2d_current = self.mirror_transform(
                 clip_current,
                 mano_current,
