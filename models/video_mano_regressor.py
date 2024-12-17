@@ -21,6 +21,7 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
+from models.losses import keypoint_diversity_loss, temporal_diversity_loss
 from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d, reconstruction_error
 
 
@@ -367,10 +368,14 @@ class VideoMANORegressor(pl.LightningModule):
     ) -> torch.Tensor:
         """Calculate the loss for the model.
 
-        The loss function consists of three components:
-        1. Pose loss: MSE between predicted and ground truth pose parameters (first 45 values).
-        2. Shape loss: MSE between predicted and ground truth shape parameters (last 10 values).
-        3. Keypoints loss: L1 loss between predicted and ground truth 3D hand joints.
+        The loss function consists of seven components:
+        1. Global orientation loss: MSE between predicted and ground truth global orientation parameters.
+        2. Pose loss: MSE between predicted and ground truth pose parameters.
+        3. Shape loss: MSE between predicted and ground truth shape parameters (last 10 values).
+        4. 3D Keypoints loss: L1 loss between predicted and ground truth 3D hand joints.
+        5. 2D Keypoints loss: L1 loss between predicted and ground truth 2D keypoints.
+        6. Keypoint diversity loss: Penalizes keypoints that are too close within each frame.
+        7. Temporal diversity loss: Penalizes MANO parameters that are too similar across frames.
 
         The total loss is the sum of these three components.
 
@@ -417,6 +422,10 @@ class VideoMANORegressor(pl.LightningModule):
         keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints, reduction="none").sum(dim=(-1, -2)).mean()
         keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d, reduction="none").sum(dim=(-1, -2)).mean()
 
+        # Add new diversity losses
+        kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d)
+        temp_diversity_loss = temporal_diversity_loss(y_pred)
+
         if self.hparams.loss_weights is None:
             losses = {
                 "global_orientation": global_orientation_loss,
@@ -424,6 +433,8 @@ class VideoMANORegressor(pl.LightningModule):
                 "shape": shape_loss,
                 "keypoints_3d": keypoints_loss,
                 "keypoints_2d": keypoints_2d_loss,
+                "keypoint_diversity": kp_diversity_loss,
+                "temporal_diversity": temp_diversity_loss,
             }
         else:
             losses = {
@@ -432,6 +443,8 @@ class VideoMANORegressor(pl.LightningModule):
                 "shape": self.hparams.loss_weights["shape"] * shape_loss,
                 "keypoints_3d": self.hparams.loss_weights["keypoints_3d"] * keypoints_loss,
                 "keypoints_2d": self.hparams.loss_weights["keypoints_2d"] * keypoints_2d_loss,
+                "keypoint_diversity": self.hparams.loss_weights["keypoint_diversity"] * kp_diversity_loss,
+                "temporal_diversity": self.hparams.loss_weights["temporal_diversity"] * temp_diversity_loss,
             }
 
         losses["loss"] = sum(losses.values())

@@ -18,6 +18,8 @@ model:
     global_orientation: 1
     pose: 1
     shape: 1
+    keypoint_diversity: 1
+    temporal_diversity: 1
   sixd: True
   mano_params: 109
   mean_mano_params_location: "./external/mano_mean_params.npz"
