@@ -346,7 +346,7 @@ class VideoMANORegressor(pl.LightningModule):
         mano_trans = final_hand_params[..., :3].unsqueeze(2)
 
         # Predict reverse depth
-        mano_trans[..., 2] = self.hparams.focal_length / (mano_trans[..., 2] + 1e-9)
+        mano_trans[..., 2] = self.hparams.focal_length / (F.relu(mano_trans[..., 2]) + 1e-9)
 
         # Scale to milimeters
         mano_trans = mano_trans * 1000
