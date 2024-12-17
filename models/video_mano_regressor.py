@@ -345,8 +345,11 @@ class VideoMANORegressor(pl.LightningModule):
         # Project 3D joints to 2D using predicted translation
         mano_trans = final_hand_params[..., :3].unsqueeze(2)
 
-        # Predict reverse depth
-        mano_trans[..., 2] = self.hparams.focal_length / (F.relu(mano_trans[..., 2]) + 1e-9)
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(mano_trans)
+        mask[..., 2] = 1
+        reverse_depth = self.hparams.focal_length / (F.relu(mano_trans[..., 2]) + 1e-9)
+        mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
 
         # Scale to milimeters
         mano_trans = mano_trans * 1000
