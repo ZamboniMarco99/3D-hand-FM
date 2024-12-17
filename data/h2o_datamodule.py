@@ -426,9 +426,10 @@ class H2ODataset(Dataset):
             joints_2d_current,
         )
         if not return_right_hand:
-            clip_current, mano_current, joints_2d_current = self.mirror_transform(
+            clip_current, mano_current, joints_current, joints_2d_current = self.mirror_transform(
                 clip_current,
                 mano_current,
+                joints_current,
                 joints_2d_current,
             )
 

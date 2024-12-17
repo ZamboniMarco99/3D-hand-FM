@@ -244,25 +244,28 @@ class VideoMirror(nn.Module):
         self,
         video: Tensor,
         mano: Tensor,
+        joints_3d: Tensor | None = None,
         joints_2d: Tensor | None = None,
-    ) -> tuple[Tensor, Tensor, Tensor | None]:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
         """Forward pass of the VideoMirror transform.
 
         Args:
             video (Tensor): Video tensor of shape (T, C, H, W) or (N, T, C, H, W)
             mano (Tensor): MANO parameters with shape (T, 61)
                 containing translation, pose and shape parameters
+            joints_3d (Tensor | None): 3D joint coordinates with shape (T, J, 3)
             joints_2d (Tensor | None): 2D joint coordinates with shape (T, J, 2)
 
         Returns:
             tuple[Tensor, Tensor, Tensor | None]: Tuple containing:
                 - Mirrored video tensor
                 - Updated MANO parameters
+                - Updated 3D joint coordinates (if provided)
                 - Updated 2D joint coordinates (if provided)
 
         """
         if random.random() > self.p:
-            return video, mano, joints_2d
+            return video, mano, joints_3d, joints_2d
 
         # Handle both batched and unbatched videos
         need_squeeze = False
@@ -288,11 +291,13 @@ class VideoMirror(nn.Module):
             width = video.shape[-1]
             # Mirror x coordinates (first dimension of joints)
             joints_2d[..., 0] = width - joints_2d[..., 0]
+        if joints_3d is not None:
+            joints_3d[..., 0] = -joints_3d[..., 0]
 
         if need_squeeze:
             video = video.squeeze(0)
 
-        return video, mirrored_mano, joints_2d
+        return video, mirrored_mano, joints_3d, joints_2d
 
 
 class CropHand:
