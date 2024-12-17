@@ -2,7 +2,7 @@ import torch
 from torch.nn import functional as F  # noqa: N812
 
 
-def keypoint_diversity_loss(predictions_2d: torch.Tensor, epsilon: float = 5.0) -> torch.Tensor:
+def keypoint_diversity_loss(predictions_2d: torch.Tensor, epsilon: float = 10.0) -> torch.Tensor:
     """Vectorized implementation of Keypoint Diversity Loss for 2D keypoints.
 
     Penalizes keypoints that are closer than epsilon distance within the same frame.
