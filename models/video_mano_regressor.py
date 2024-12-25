@@ -22,7 +22,7 @@ from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
 from models.losses import keypoint_diversity_loss, temporal_diversity_loss
-from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d, reconstruction_error
+from models.utils import get_mano_joints, project_joints_to_2d, reconstruction_error, aa_to_sixd
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -300,6 +300,8 @@ class VideoMANORegressor(pl.LightningModule):
             use_pca=use_pca,
             flat_hand_mean=flat_hand_mean,
             side="right",
+            root_rot_mode="rotmat",
+            joint_rot_mode="rotmat",
         )
         self.mano_model.requires_grad_(requires_grad=False)
 
@@ -476,7 +478,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         if self.sixd:
             # convert to 6D pose
-            y = mano_to_sixd(y)
+            y = aa_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
@@ -531,7 +533,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         if self.sixd:
             # convert to 6D pose
-            y = mano_to_sixd(y)
+            y = aa_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]

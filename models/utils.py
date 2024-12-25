@@ -8,7 +8,6 @@ that are helpful in processing data, executing MANO models, and other related ta
 import torch
 import torch.nn.functional as F  # noqa: N812
 from manopth.manolayer import ManoLayer
-from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
 
 
 def get_mano_joints(
@@ -32,77 +31,23 @@ def get_mano_joints(
     batch_size = mano_params.shape[0]
     num_frames = mano_params.shape[1]
 
-    if from_sixd:
-        mano_params = sixd_to_mano(mano_params)
-
     # Push the time dimension in the batch dimension
     params = mano_params.view(-1, mano_params.shape[2])
 
+    pose = params[..., 3:-10]
+    shape = params[..., -10:]
+    if from_sixd:
+        pose = sixd_to_rotmat(pose)
+
     # Process hand without translation
     _, hand_joints = mano(
-        params[:, 3:51],  # pose
-        params[:, 51:],  # shape
+        pose,  # pose
+        shape,  # shape
+
     )
 
     # Reshape the joints to match the original batch size and time dimension
     return hand_joints.view(batch_size, num_frames, -1, 3)
-
-
-def get_mano_joints_both_hands(
-    mano_params_left: torch.Tensor,
-    mano_params_right: torch.Tensor,
-    mano_left: ManoLayer,
-    mano_right: ManoLayer,
-    from_sixd: bool = False,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Execute the MANO model to generate hand joints.
-
-    Args:
-        mano_params_left (torch.Tensor): Tensor containing MANO parameters for the left hand.
-            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
-        mano_params_right (torch.Tensor): Tensor containing MANO parameters for the right hand.
-            Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
-        mano_left (ManoLayer): MANO model for the left hand.
-        mano_right (ManoLayer): MANO model for the right hand.
-        from_sixd (bool): If True, the input parameters are in 6D representation. Default: False.
-
-    Returns:
-        tuple[torch.Tensor, torch.Tensor]: A tuple containing:
-            - Left hand joints: Tensor of shape (batch_size, num_joints, 3)
-            - Right hand joints: Tensor of shape (batch_size, num_joints, 3)
-
-    """
-    # Get the device of mano_params
-    batch_size = mano_params_left.shape[0]
-    num_frames = mano_params_left.shape[1]
-
-    if from_sixd:
-        mano_params_left = sixd_to_mano(mano_params_left)
-        mano_params_right = sixd_to_mano(mano_params_right)
-
-    # Push the time dimension in the batch dimension
-    left_params = mano_params_left.view(-1, mano_params_left.shape[2])
-    right_params = mano_params_right.view(-1, mano_params_right.shape[2])
-
-    # Process left hand
-    _, left_hand_joints = mano_left(
-        left_params[:, 3:51],  # pose
-        left_params[:, 51:],  # shape
-        left_params[:, :3],  # translation
-    )
-
-    # Process right hand
-    _, right_hand_joints = mano_right(
-        right_params[:, 3:51],  # pose
-        right_params[:, 51:],  # shape
-        right_params[:, :3],  # translation
-    )
-
-    # Reshape the joints to match the original batch size and time dimension
-    left_hand_joints = left_hand_joints.view(batch_size, num_frames, -1, 3)
-    right_hand_joints = right_hand_joints.view(batch_size, num_frames, -1, 3)
-
-    return left_hand_joints, right_hand_joints
 
 
 def project_joints_to_2d(
@@ -231,164 +176,126 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     return clip_means.mean()
 
 
-def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:
-    """Convert a 61=3+10+48 element MANO pose parameter to a 109=3+10+96  6D representation.
+def quat_to_rotmat(quat: torch.Tensor) -> torch.Tensor:
+    """
+    Convert quaternion representation to rotation matrix.
+
+    Credit: Hamer
 
     Args:
-        x (torch.Tensor): Input tensor with shape (..., 61)
-
+        quat (torch.Tensor) of shape (B, 4); 4 <===> (w, x, y, z).
     Returns:
-        torch.Tensor: Output tensor with shape (..., 109)
-
+        torch.Tensor: Corresponding rotation matrices with shape (B, 3, 3).
     """
-    translation = x[..., :3]
-    pose = x[..., 3:-10]
-    shape = x[..., -10:]
+    norm_quat = quat
+    norm_quat = norm_quat/norm_quat.norm(p=2, dim=1, keepdim=True)
+    w, x, y, z = norm_quat[:,0], norm_quat[:,1], norm_quat[:,2], norm_quat[:,3]
 
-    # Convert pose to 6D representation
-    pose_6d = axisang_to_sixd(pose)
+    B = quat.size(0)
 
-    # Concatenate translation, shape, and pose_6d
-    return torch.cat([translation, pose_6d, shape], dim=-1)
+    w2, x2, y2, z2 = w.pow(2), x.pow(2), y.pow(2), z.pow(2)
+    wx, wy, wz = w*x, w*y, w*z
+    xy, xz, yz = x*y, x*z, y*z
+
+    rotMat = torch.stack([w2 + x2 - y2 - z2, 2*xy - 2*wz, 2*wy + 2*xz,
+                          2*wz + 2*xy, w2 - x2 + y2 - z2, 2*yz - 2*wx,
+                          2*xz - 2*wy, 2*wx + 2*yz, w2 - x2 - y2 + z2], dim=1).view(B, 3, 3)
+    return rotMat
 
 
-def sixd_to_mano(x: torch.Tensor) -> torch.Tensor:
-    """Convert a 109=3+10+96 element 6D representation to a 61=3+10+48 element MANO pose parameter.
+def aa_to_rotmat(theta: torch.Tensor):
+    """
+    Convert axis-angle representation to rotation matrix.
+    Works by first converting it to a quaternion.
+
+    Credit: Hamer
 
     Args:
-        x (torch.Tensor): Input tensor with shape (..., 109)
-
+        theta (torch.Tensor): Tensor of shape (B, 3) containing axis-angle representations.
     Returns:
-        torch.Tensor: Output tensor with shape (..., 61)
-
+        torch.Tensor: Corresponding rotation matrices with shape (B, 3, 3).
     """
-    # Split the input tensor into translation, shape, and pose_6d parameters
-    translation = x[..., :3]
-    pose_6d = x[..., 3:-10]
-    shape = x[..., -10:]
+    norm = torch.norm(theta + 1e-8, p = 2, dim = 1)
+    angle = torch.unsqueeze(norm, -1)
+    normalized = torch.div(theta, angle)
+    angle = angle * 0.5
+    v_cos = torch.cos(angle)
+    v_sin = torch.sin(angle)
+    quat = torch.cat([v_cos, v_sin * normalized], dim = 1)
+    return quat_to_rotmat(quat)
 
-    # Convert pose_6d to axis-angle representation
-    pose = sixd_to_axisang(pose_6d)
-
-    # Concatenate translation, pose, and shape
-    return torch.cat([translation, pose, shape], dim=-1)
-
-
-def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
-    """Convert a 6D representation to an axis-angle representation.
-
-    We use a Gram-Schmidt-like process.
-
-    Input: (..., n*6) tensor
-    Output: (..., n*3) tensor.
+def aa_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert axis-angle representation to 6D rotation representation.
+    
+    Args:
+        x (torch.Tensor): Axis-angle tensor of shape (B, J*3) or (B, T, J*3)
+            where B=batch size, T=sequence length, J=number of joints
+            
+    Returns:
+        torch.Tensor: 6D rotation representation with shape (B, J*6) or (B, T, J*6)
     """
-    dims = x.shape
-    if x.shape[-1] % 6 != 0:
-        msg = f"Last dimension must be a multiple of 6. Got {x.shape[-1]}."
-        raise ValueError(msg)
-
-    # Reshape (..., n*6) to (-1, 6)
-    x = x.reshape(-1, 6)
-
-    # Convert 6D to rotation matrix using Gram-Schmidt-like process
-    b1 = x[..., :3]
-    b2 = x[..., 3:]
-    b1 = F.normalize(b1, dim=-1)
-    dot_b1_b2 = torch.sum(b1 * b2, dim=-1, keepdim=True)
-    b2 = b2 - dot_b1_b2 * b1
-    b2 = F.normalize(b2, dim=-1)
-    b3 = torch.cross(b1, b2, dim=-1)
-    # Form the rotation matrix by stacking b1, b2, b3 as rows
-    rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
-
-    # Convert rotation matrix to axis-angle
-    axisang = matrix_to_axis_angle(rotmat)  # Shape (-1, 3)
-
-    # Reshape back to (..., n*3)
-    return axisang.reshape(*dims[:-1], dims[-1] // 2)
-
-
-def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
-    """Convert an axis-angle representation to a 6D representation.
-
-    Input: (..., n*3) tensor
-    Output: (..., n*6) tensor.
-    """
-    dims = x.shape
-    if x.shape[-1] % 3 != 0:
-        msg = f"Last dimension must be a multiple of 3. Got {x.shape[-1]}."
-        raise ValueError(msg)
-
-    # Reshape (..., n*3) to (-1, 3)
+    orig_shape = x.shape
+    if len(orig_shape) == 3:  # (B, T, J*3)
+        x = x.view(-1, orig_shape[-1])  # Combine B and T dimensions
+        
+    # Reshape to (B*J, 3) or (B*T*J, 3)
     x = x.reshape(-1, 3)
+        
+    # Convert to rotation matrices (B*J, 3, 3) or (B*T*J, 3, 3)
+    rot_mats = aa_to_rotmat(x)
+    
+    # Extract first two columns to get 6D representation
+    sixd = rot_mats[..., :, :2].reshape(-1, 6)
+    
+    if len(orig_shape) == 3:
+        # Restore B, T dimensions
+        sixd = sixd.reshape(orig_shape[0], orig_shape[1], -1)
+    else:
+        # Restore B dimension
+        sixd = sixd.reshape(orig_shape[0], -1)
+        
+    return sixd
 
-    # Convert axis-angle to rotation matrix
-    rotmat = axis_angle_to_matrix(x)  # Shape (-1, 3, 3)
-
-    # take first two rows of rotation matrix
-    sixd = rotmat[..., :2, :]  # Shape (-1, 2, 3)
-
-    # Reshape back to original dimensions (..., n*6)
-    return sixd.reshape(*dims[:-1], dims[-1] * 2)
 
 
-def test_sixd_conversion() -> None:
-    """Test the conversion between 6D and axis-angle representations.
 
-    Also test if gradients are propagated correctly.
+def sixd_to_rotmat(x: torch.Tensor) -> torch.Tensor:
     """
-    tests = [
-        torch.randn(6),
-        torch.randn(10, 100, 100, 96),
-        torch.randn(3, 4, 5, 2, 6),
-    ]
-    for test in tests:
-        print(f"{test.shape}: {loop_consistency_test(test)}")
+    Convert 6D rotation representation to 3x3 rotation matrix.
+    Based on Zhou et al., "On the Continuity of Rotation Representations in Neural Networks", CVPR 2019
 
-    # test if the mano conversion is consistent
-    x = torch.randn(1, 61)
-    y = mano_to_sixd(x)
-    x_ = sixd_to_mano(y)
-    print("Mano Conversion works: ", torch.allclose(x, x_, atol=1e-5))
-
-    # test to see if gradients are propagated correctly
-    # the reversed process gets stuck in a local minimum
-    x = torch.randn(1, 3, requires_grad=True)
-    print("Input tensor:", x)
-    x_ = torch.randn(1, 3, requires_grad=True)
-    y = axisang_to_sixd(x).detach()
-
-    optimizer = torch.optim.SGD([x_], lr=0.1)  # SGD optimizer with learning rate 0.01
-
-    num_iterations = 500
-    for i in range(num_iterations):
-        optimizer.zero_grad()
-        x6 = axisang_to_sixd(x_)  # dummy operation
-        loss = torch.mean((y - x6) ** 2)
-        loss.backward()
-        optimizer.step()
-
-        if i % 100 == 0:
-            print(f"Iteration {i}: Loss = {loss.item()}")
-
-    print("Final optimized input_tensor:", x_)
-
-
-def loop_consistency_test(x6: torch.Tensor) -> tuple[bool, torch.Tensor]:
-    """Test the consistency of the conversion functions.
-
+    Credit: Hamer
     Args:
-        x6 (torch.Tensor): Input tensor with shape (..., n*6)
-
+        x (torch.Tensor): 6D rotation representation with shape (B, J*6) or (B, T, J*6)
+            where B=batch size, T=sequence length, J=number of joints
     Returns:
-        tuple[bool, torch.Tensor]: A tuple containing:
-            - A boolean indicating if the conversion is consistent.
-    - The maximum error in the conversion.
-
+        torch.Tensor: Batch of corresponding rotation matrices with shape (B, J, 3, 3) or (B, T, J, 3, 3)
     """
-    x3 = sixd_to_axisang(x6)
-    x6_ = axisang_to_sixd(x3)
-    x3_ = sixd_to_axisang(x6_)
-    x6__ = axisang_to_sixd(x3_)
-    error = torch.reshape(x6_ - x6__, (1, -1))
-    return torch.allclose(x6_, x6__, atol=1e-5), torch.max(torch.abs(error))
+    orig_shape = x.shape
+    
+    # Handle both (B, J*6) and (B, T, J*6) inputs
+    if len(orig_shape) == 3:  # (B, T, J*6)
+        x = x.reshape(-1, orig_shape[-1])  # Combine B and T dimensions
+        
+    # Reshape to (B*J, 6) or (B*T*J, 6)
+    x = x.reshape(-1, 6)
+    
+    # Convert to rotation matrices
+    x = x.reshape(-1, 2, 3).permute(0, 2, 1).contiguous()
+    a1 = x[:, :, 0]
+    a2 = x[:, :, 1]
+    b1 = F.normalize(a1)
+    b2 = F.normalize(a2 - torch.einsum('bi,bi->b', b1, a2).unsqueeze(-1) * b1)
+    b3 = torch.cross(b1, b2)
+    rot_mats = torch.stack((b1, b2, b3), dim=-1)
+    
+    # Reshape back to original dimensions
+    if len(orig_shape) == 3:
+        # Restore B, T, J dimensions for (B, T, J*6) input
+        rot_mats = rot_mats.reshape(orig_shape[0], orig_shape[1], -1, 3, 3)
+    else:
+        # Restore B, J dimensions for (B, J*6) input
+        rot_mats = rot_mats.reshape(orig_shape[0], -1, 3, 3)
+        
+    return rot_mats
+
