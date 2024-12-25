@@ -257,6 +257,22 @@ def aa_to_sixd(x: torch.Tensor) -> torch.Tensor:
     return sixd
 
 
+def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert MANO parameters to 6D rotation representation while preserving translation and shape.
+
+    Args:
+        x (torch.Tensor): MANO parameters of shape (B, 61)
+
+    Returns:
+        torch.Tensor: Parameters with shape (B, 109) containing:
+            - Translation parameters (3)
+            - 6D rotation representation (96) 
+            - Shape parameters (10)
+    """
+    trans = x[..., :3]
+    pose_6d = aa_to_sixd(x[..., 3:-10])
+    shape = x[..., -10:]
+    return torch.cat([trans, pose_6d, shape], dim=-1)
 
 
 def sixd_to_rotmat(x: torch.Tensor) -> torch.Tensor:
