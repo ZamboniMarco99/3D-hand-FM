@@ -8,7 +8,7 @@ that are helpful in processing data, executing MANO models, and other related ta
 import torch
 import torch.nn.functional as F  # noqa: N812
 from manopth.manolayer import ManoLayer
-from pytorch3d.transforms import axis_angle_to_matrix, matrix_to_axis_angle
+from roma import rotmat_to_rotvec, rotvec_to_rotmat
 
 
 def get_mano_joints(
@@ -302,7 +302,7 @@ def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
     rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
 
     # Convert rotation matrix to axis-angle
-    axisang = matrix_to_axis_angle(rotmat)  # Shape (-1, 3)
+    axisang = rotmat_to_rotvec(rotmat)  # Shape (-1, 3)
 
     # Reshape back to (..., n*3)
     return axisang.reshape(*dims[:-1], dims[-1] // 2)
@@ -323,7 +323,7 @@ def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
     x = x.reshape(-1, 3)
 
     # Convert axis-angle to rotation matrix
-    rotmat = axis_angle_to_matrix(x)  # Shape (-1, 3, 3)
+    rotmat = rotvec_to_rotmat(x)  # Shape (-1, 3, 3)
 
     # take first two rows of rotation matrix
     sixd = rotmat[..., :2, :]  # Shape (-1, 2, 3)
