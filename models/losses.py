@@ -1,3 +1,6 @@
+"""Loss functions for training hand pose estimation models.
+"""
+
 import torch
 from torch.nn import functional as F  # noqa: N812
 
