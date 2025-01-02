@@ -22,7 +22,7 @@ from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
 from models.losses import keypoint_diversity_loss, temporal_diversity_loss
-from models.utils import get_mano_joints, project_joints_to_2d, reconstruction_error, mano_to_sixd
+from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d, reconstruction_error
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -300,8 +300,6 @@ class VideoMANORegressor(pl.LightningModule):
             use_pca=use_pca,
             flat_hand_mean=flat_hand_mean,
             side="right",
-            root_rot_mode="rotmat",
-            joint_rot_mode="rotmat",
         )
         self.mano_model.requires_grad_(requires_grad=False)
 
