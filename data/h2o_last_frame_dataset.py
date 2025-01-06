@@ -8,8 +8,8 @@ has one item for each possible frame that could be the last frame of a clip.
 
 import numpy as np
 import torch
-import torch.nn.functional as F  # noqa: N812
 from torch import nn
+from torchvision.transforms import functional as F  # noqa: N812  # noqa: N812
 
 from data.bbox_reader import BboxReader
 from data.h2o_datamodule import H2ODataset
