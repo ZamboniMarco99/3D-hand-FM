@@ -154,11 +154,11 @@ class H2OLastFrameDataset(H2ODataset):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
                   C is the number of channels (3), and H=W=output_size.
-                - A tensor of MANO parameters with shape (61,) for the target frame, containing
+                - A tensor of MANO parameters with shape (1, 61) for the target frame, containing
                   translation (3), pose (45) and shape (10) parameters.
-                - A tensor of 3D joint coordinates with shape (J, 3) for the target frame,
+                - A tensor of 3D joint coordinates with shape (1, J, 3) for the target frame,
                   where J is the number of joints.
-                - A tensor of 2D joint coordinates with shape (J, 2) for the target frame,
+                - A tensor of 2D joint coordinates with shape (1, J, 2) for the target frame,
                   where J is the number of joints.
 
         """
@@ -192,6 +192,12 @@ class H2OLastFrameDataset(H2ODataset):
         joints_current = torch.from_numpy(joints_right[0] if self.return_right_hand else joints_left[0])
         intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
+        # Add time dimension to target tensors
+        mano_current = mano_current.unsqueeze(0)  # Add time dimension
+        joints_current = joints_current.unsqueeze(0)  # Add time dimension
+        bbox_current = bbox_current.unsqueeze(0)  # Add time dimension
+        intrinsics = intrinsics.unsqueeze(0)  # Add time dimension
+
         # Project joints to 2D
         mano_trans = mano_current[..., :3].unsqueeze(0).clone()
         # Scale to milimeters
@@ -199,7 +205,7 @@ class H2OLastFrameDataset(H2ODataset):
         joints_2d_current = project_joints_to_2d(
             (joints_current + mano_trans).unsqueeze(0),
             intrinsics,
-        ).squeeze(0)
+        )
 
         # Apply CropHand transform for the current hand only
         clip_current, joints_2d_current = self.crop_transform(
