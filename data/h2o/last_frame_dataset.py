@@ -9,10 +9,10 @@ has one item for each possible frame that could be the last frame of a clip.
 import numpy as np
 import torch
 from torch import nn
-from torchvision.transforms import functional as F  # noqa: N812  # noqa: N812
+from torchvision.transforms import functional as F  # noqa: N812
 
 from data.bbox_reader import BboxReader
-from data.h2o_datamodule import H2ODataset
+from data.h2o.dataset import H2ODataset
 from data.joints_reader import JointsReader
 from data.mano_reader import ManoReader
 from data.video_reader import VideoReader
