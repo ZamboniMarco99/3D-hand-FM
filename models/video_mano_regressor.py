@@ -441,7 +441,8 @@ class VideoMANORegressor(pl.LightningModule):
 
         # Add new diversity losses
         kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d)
-        temp_diversity_loss = temporal_diversity_loss(y_pred)
+
+        temp_diversity_loss = 0 if self.last_frame_only else temporal_diversity_loss(y_pred)
 
         if self.hparams.loss_weights is None:
             losses = {
