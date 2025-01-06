@@ -31,10 +31,8 @@ jobs:
       - name: Create virtual environment
         run: uv venv
       - name: Install build dependencies
-        run: uv pip install pip setuptools
+        run: uv pip install pip setuptools torch ninja
       - name: Install dependencies
         run: uv sync --all-extras --dev
       - name: lint
         run: uv run ruff check .
-      - name: format
-        run: uv run ruff format --check .

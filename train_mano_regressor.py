@@ -5,6 +5,7 @@ import os
 
 import hydra
 import pytorch_lightning as pl
+import torch
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -20,6 +21,8 @@ def main(cfg: DictConfig) -> None:
     # Set up logging
     logging.basicConfig(level=cfg.log_level)
     logger = logging.getLogger(__name__)
+
+    torch.set_float32_matmul_precision("high")
 
     transforms = []
     if cfg.transforms is not None:
@@ -58,6 +61,9 @@ def main(cfg: DictConfig) -> None:
         learning_rate=cfg.model.learning_rate,
         loss_weights=cfg.model.loss_weights,
         pretrained=cfg.data.pretrained,
+        mano_params=cfg.model.mano_params,
+        sixd=cfg.model.sixd,
+        mean_mano_params_location=cfg.model.mean_mano_params_location,
     )
     logger.info("Model initialized")
 

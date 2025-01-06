@@ -11,6 +11,7 @@ Example usage:
     trainer.fit(model, train_dataloader, val_dataloader)
 """
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 from manopth.manolayer import ManoLayer
@@ -20,7 +21,8 @@ from torch.optim import Adam
 from torchvision.models.video.mvit import MSBlockConfig, MViT, MViT_V2_S_Weights, _mvit
 from torchvision.models.video.mvit import mvit_v2_s as _mvit_v2_s_pretrained
 
-from models.utils import get_mano_joints, project_joints_to_2d, reconstruction_error
+from models.losses import keypoint_diversity_loss, temporal_diversity_loss
+from models.utils import get_mano_joints, mano_to_sixd, project_joints_to_2d, reconstruction_error
 
 
 def get_mvit_v2_s_block_setting() -> list[MSBlockConfig]:
@@ -203,11 +205,13 @@ class VideoMANORegressor(pl.LightningModule):
         ncomps: int = 45,
         use_pca: bool = False,
         flat_hand_mean: bool = True,
-        mano_params: int = 61,  # Single hand, 61 parameters
+        mano_params: int = 61,  # noqa: ARG002
         learning_rate: float = 1e-3,  # noqa: ARG002
         loss_weights: dict[str, float] | None = None,  # noqa: ARG002
         pretrained: bool = False,
         focal_length: float | None = None,
+        sixd: bool = False,
+        mean_mano_params_location: str = "./external/mean_mano_params.npz",
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -224,6 +228,8 @@ class VideoMANORegressor(pl.LightningModule):
             loss_weights (dict[str, float], optional): Loss weights for the different components.
             pretrained (bool, optional): Whether to use pretrained weights for the backbone. Defaults to False.
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
+            sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
+            mean_mano_params_location (str, optional): Location of the mean MANO parameters.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -237,6 +243,7 @@ class VideoMANORegressor(pl.LightningModule):
             focal_length = width / 2
 
         self.save_hyperparameters()
+        self.sixd = sixd
 
         # Create default camera intrinsic matrix
         self.register_buffer(
@@ -267,23 +274,40 @@ class VideoMANORegressor(pl.LightningModule):
         # Remove the classification head
         self.backbone.head = nn.Identity()
 
-        # Regressors for left (only) hand
-        self.regressor = nn.Sequential(
-            nn.Linear(backbone_out_features, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, 2048),
-            nn.ReLU(),
-            nn.Linear(2048, mano_params * num_frames),
+        self.num_trans_params = 3
+        self.num_shape_params = 10
+        if sixd:
+            self.num_pose_params = 96
+        else:
+            self.num_pose_params = 45
+
+        # Regressors for parameters
+        self.regressor_trans = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
         )
 
-        self.mano_left = ManoLayer(
+        self.regressor_pose = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+        )
+
+        self.regressor_shape = nn.Sequential(
+            nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
+        )
+
+        self.mano_model = ManoLayer(
             mano_root=mano_root,
             ncomps=ncomps,
             use_pca=use_pca,
             flat_hand_mean=flat_hand_mean,
-            side="left",
+            side="right",
         )
-        self.mano_left.requires_grad_(requires_grad=False)
+        self.mano_model.requires_grad_(requires_grad=False)
+
+        # Load mean MANO parameters
+        mean_mano_params = np.load(mean_mano_params_location)
+        self.register_buffer("init_pose", torch.tensor(mean_mano_params["pose"], dtype=torch.float32))
+        self.register_buffer("init_shape", torch.tensor(mean_mano_params["shape"], dtype=torch.float32))
+        self.register_buffer("init_trans", torch.tensor(mean_mano_params["cam"], dtype=torch.float32))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the VideoMANORegressor model.
@@ -299,21 +323,33 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         features = self.backbone(x)
-        hand_params = self.regressor(features)
+        trans_params = self.regressor_trans(features).reshape(x.shape[0], -1, self.num_trans_params)
+        pose_params = self.regressor_pose(features).reshape(x.shape[0], -1, self.num_pose_params)
+        shape_params = self.regressor_shape(features).reshape(x.shape[0], -1, self.num_shape_params)
 
         # Reshape the outputs
-        hand_params = hand_params.view(x.shape[0], -1, self.hparams.mano_params)
+        hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
+
+        # Add mean MANO parameters
+        final_hand_params = hand_params + torch.concat(
+            (self.init_trans, self.init_pose, self.init_shape),
+            dim=-1,
+        )
 
         hand_joints = get_mano_joints(
-            hand_params,
-            self.mano_left,
+            final_hand_params,
+            self.mano_model,
+            self.sixd,
         )
 
         # Project 3D joints to 2D using predicted translation
-        mano_trans = hand_params[..., :3].unsqueeze(2)
+        mano_trans = final_hand_params[..., :3].unsqueeze(2)
 
-        # Predict reverse depth
-        mano_trans[..., 2] = self.hparams.focal_length / (mano_trans[..., 2] + 1e-9)
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(mano_trans)
+        mask[..., 2] = 1
+        reverse_depth = self.hparams.focal_length / (F.softplus(mano_trans[..., 2]) + 1e-2)
+        mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
 
         # Scale to milimeters
         mano_trans = mano_trans * 1000
@@ -322,7 +358,7 @@ class VideoMANORegressor(pl.LightningModule):
             self.intrinsic_matrix,
         )
 
-        return hand_params, hand_joints, hand_joints_2d
+        return final_hand_params, hand_joints, hand_joints_2d
 
     def loss_function(
         self,
@@ -335,10 +371,14 @@ class VideoMANORegressor(pl.LightningModule):
     ) -> torch.Tensor:
         """Calculate the loss for the model.
 
-        The loss function consists of three components:
-        1. Pose loss: MSE between predicted and ground truth pose parameters (first 45 values).
-        2. Shape loss: MSE between predicted and ground truth shape parameters (last 10 values).
-        3. Keypoints loss: L1 loss between predicted and ground truth 3D hand joints.
+        The loss function consists of seven components:
+        1. Global orientation loss: MSE between predicted and ground truth global orientation parameters.
+        2. Pose loss: MSE between predicted and ground truth pose parameters.
+        3. Shape loss: MSE between predicted and ground truth shape parameters (last 10 values).
+        4. 3D Keypoints loss: L1 loss between predicted and ground truth 3D hand joints.
+        5. 2D Keypoints loss: L1 loss between predicted and ground truth 2D keypoints.
+        6. Keypoint diversity loss: Penalizes keypoints that are too close within each frame.
+        7. Temporal diversity loss: Penalizes MANO parameters that are too similar across frames.
 
         The total loss is the sum of these three components.
 
@@ -354,11 +394,40 @@ class VideoMANORegressor(pl.LightningModule):
             torch.Tensor: The computed loss.
 
         """
-        global_orientation_loss = F.mse_loss(y_pred[..., 3:6], y_true[..., 3:6])
-        pose_loss = F.mse_loss(y_pred[..., 6:51], y_true[..., 6:51])
-        shape_loss = F.mse_loss(y_pred[..., -10:], y_true[..., -10:])
-        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints)
-        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d)
+        end_global_orientation = 9 if self.sixd else 6
+        global_orientation_loss = (
+            F.mse_loss(
+                y_pred[..., 3:end_global_orientation],
+                y_true[..., 3:end_global_orientation],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
+        )
+        pose_loss = (
+            F.mse_loss(
+                y_pred[..., end_global_orientation:-10],
+                y_true[..., end_global_orientation:-10],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
+        )
+        shape_loss = (
+            F.mse_loss(
+                y_pred[..., -10:],
+                y_true[..., -10:],
+                reduction="none",
+            )
+            .sum(dim=-1)
+            .mean()
+        )
+        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints, reduction="none").sum(dim=(-1, -2)).mean()
+        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d, reduction="none").sum(dim=(-1, -2)).mean()
+
+        # Add new diversity losses
+        kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d)
+        temp_diversity_loss = temporal_diversity_loss(y_pred)
 
         if self.hparams.loss_weights is None:
             losses = {
@@ -367,6 +436,8 @@ class VideoMANORegressor(pl.LightningModule):
                 "shape": shape_loss,
                 "keypoints_3d": keypoints_loss,
                 "keypoints_2d": keypoints_2d_loss,
+                "keypoint_diversity": kp_diversity_loss,
+                "temporal_diversity": temp_diversity_loss,
             }
         else:
             losses = {
@@ -375,6 +446,8 @@ class VideoMANORegressor(pl.LightningModule):
                 "shape": self.hparams.loss_weights["shape"] * shape_loss,
                 "keypoints_3d": self.hparams.loss_weights["keypoints_3d"] * keypoints_loss,
                 "keypoints_2d": self.hparams.loss_weights["keypoints_2d"] * keypoints_2d_loss,
+                "keypoint_diversity": self.hparams.loss_weights["keypoint_diversity"] * kp_diversity_loss,
+                "temporal_diversity": self.hparams.loss_weights["temporal_diversity"] * temp_diversity_loss,
             }
 
         losses["loss"] = sum(losses.values())
@@ -400,6 +473,10 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         x, y, true_hand_joints, true_keypoints_2d = batch
+
+        if self.sixd:
+            # convert to 6D pose
+            y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
@@ -451,6 +528,10 @@ class VideoMANORegressor(pl.LightningModule):
 
         """
         x, y, true_hand_joints, true_keypoints_2d = batch
+
+        if self.sixd:
+            # convert to 6D pose
+            y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
         x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]

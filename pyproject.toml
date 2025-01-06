@@ -17,6 +17,7 @@ dependencies = [
     "torchaudio>=2.4.1",
     "torchvision>=0.19.1",
     "wandb>=0.12.10",
+    "roma==1.5.1",
 ]
 
 [tool.uv]
@@ -31,12 +32,6 @@ chumpy = { git = "https://github.com/mattloper/chumpy", rev = "9b045ff5d6588a24a
 
 [tool.ruff.lint]
 select = ["ALL"]
-# Avoid enforcing print rule
-# Avoid enforcing imperative docstrings
-# Avoid enforcing too many arguments
-# Avoid enforcing docstrings in __init__.py
-# Permit f-strings in logging
-# Permit boolean types in functions
 ignore = [
     "T201",  # Avoid enforcing print rule
     "D401",  # Avoid enforcing imperative docstrings

@@ -6,12 +6,15 @@ that are helpful in processing data, executing MANO models, and other related ta
 """
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 from manopth.manolayer import ManoLayer
+from roma import rotmat_to_rotvec, rotvec_to_rotmat
 
 
 def get_mano_joints(
     mano_params: torch.Tensor,
     mano: ManoLayer,
+    from_sixd: bool = False,
 ) -> torch.Tensor:
     """Execute the MANO model to generate hand joints.
 
@@ -19,6 +22,7 @@ def get_mano_joints(
         mano_params (torch.Tensor): Tensor containing MANO parameters for the hand.
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano (ManoLayer): MANO model for the hand.
+        from_sixd (bool): If True, the input parameters are in 6D representation. Default: False.
 
     Returns:
         torch.Tensor: Tensor of shape (batch_size, num_joints, 3) of hand joints without translation
@@ -27,6 +31,9 @@ def get_mano_joints(
     # Get the device of mano_params
     batch_size = mano_params.shape[0]
     num_frames = mano_params.shape[1]
+
+    if from_sixd:
+        mano_params = sixd_to_mano(mano_params)
 
     # Push the time dimension in the batch dimension
     params = mano_params.view(-1, mano_params.shape[2])
@@ -46,6 +53,7 @@ def get_mano_joints_both_hands(
     mano_params_right: torch.Tensor,
     mano_left: ManoLayer,
     mano_right: ManoLayer,
+    from_sixd: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Execute the MANO model to generate hand joints.
 
@@ -56,6 +64,7 @@ def get_mano_joints_both_hands(
             Expected shape: (batch_size, 61) where 61 = 3 (translation) + 45 (pose) + 10 (shape).
         mano_left (ManoLayer): MANO model for the left hand.
         mano_right (ManoLayer): MANO model for the right hand.
+        from_sixd (bool): If True, the input parameters are in 6D representation. Default: False.
 
     Returns:
         tuple[torch.Tensor, torch.Tensor]: A tuple containing:
@@ -66,6 +75,10 @@ def get_mano_joints_both_hands(
     # Get the device of mano_params
     batch_size = mano_params_left.shape[0]
     num_frames = mano_params_left.shape[1]
+
+    if from_sixd:
+        mano_params_left = sixd_to_mano(mano_params_left)
+        mano_params_right = sixd_to_mano(mano_params_right)
 
     # Push the time dimension in the batch dimension
     left_params = mano_params_left.view(-1, mano_params_left.shape[2])
@@ -193,7 +206,7 @@ def compute_similarity_transform(s1: torch.Tensor, s2: torch.Tensor) -> torch.Te
 def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     """Computes the mean Euclidean distance of 2 set of points s1, s2 after performing Procrustes alignment.
 
-    Credit:
+    Credit: Hamer
 
     Args:
         s1 (torch.Tensor): First set of points of shape (B, T, N, 3).
@@ -216,3 +229,166 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     clip_means = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-1)
     # Then take mean across all clips
     return clip_means.mean()
+
+
+def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 61=3+10+48 element MANO pose parameter to a 109=3+10+96  6D representation.
+
+    Args:
+        x (torch.Tensor): Input tensor with shape (..., 61)
+
+    Returns:
+        torch.Tensor: Output tensor with shape (..., 109)
+
+    """
+    translation = x[..., :3]
+    pose = x[..., 3:-10]
+    shape = x[..., -10:]
+
+    # Convert pose to 6D representation
+    pose_6d = axisang_to_sixd(pose)
+
+    # Concatenate translation, shape, and pose_6d
+    return torch.cat([translation, pose_6d, shape], dim=-1)
+
+
+def sixd_to_mano(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 109=3+10+96 element 6D representation to a 61=3+10+48 element MANO pose parameter.
+
+    Args:
+        x (torch.Tensor): Input tensor with shape (..., 109)
+
+    Returns:
+        torch.Tensor: Output tensor with shape (..., 61)
+
+    """
+    # Split the input tensor into translation, shape, and pose_6d parameters
+    translation = x[..., :3]
+    pose_6d = x[..., 3:-10]
+    shape = x[..., -10:]
+
+    # Convert pose_6d to axis-angle representation
+    pose = sixd_to_axisang(pose_6d)
+
+    # Concatenate translation, pose, and shape
+    return torch.cat([translation, pose, shape], dim=-1)
+
+
+def sixd_to_axisang(x: torch.Tensor) -> torch.Tensor:
+    """Convert a 6D representation to an axis-angle representation.
+
+    We use a Gram-Schmidt-like process.
+
+    Input: (..., n*6) tensor
+    Output: (..., n*3) tensor.
+    """
+    dims = x.shape
+    if x.shape[-1] % 6 != 0:
+        msg = f"Last dimension must be a multiple of 6. Got {x.shape[-1]}."
+        raise ValueError(msg)
+
+    # Reshape (..., n*6) to (-1, 6)
+    x = x.reshape(-1, 6)
+
+    # Convert 6D to rotation matrix using Gram-Schmidt-like process
+    b1 = x[..., :3]
+    b2 = x[..., 3:]
+    b1 = F.normalize(b1, dim=-1)
+    dot_b1_b2 = torch.sum(b1 * b2, dim=-1, keepdim=True)
+    b2 = b2 - dot_b1_b2 * b1
+    b2 = F.normalize(b2, dim=-1)
+    b3 = torch.cross(b1, b2, dim=-1)
+    # Form the rotation matrix by stacking b1, b2, b3 as rows
+    rotmat = torch.stack([b1, b2, b3], dim=-2)  # Shape (-1, 3, 3)
+
+    # Convert rotation matrix to axis-angle
+    axisang = rotmat_to_rotvec(rotmat)  # Shape (-1, 3)
+
+    # Reshape back to (..., n*3)
+    return axisang.reshape(*dims[:-1], dims[-1] // 2)
+
+
+def axisang_to_sixd(x: torch.Tensor) -> torch.Tensor:
+    """Convert an axis-angle representation to a 6D representation.
+
+    Input: (..., n*3) tensor
+    Output: (..., n*6) tensor.
+    """
+    dims = x.shape
+    if x.shape[-1] % 3 != 0:
+        msg = f"Last dimension must be a multiple of 3. Got {x.shape[-1]}."
+        raise ValueError(msg)
+
+    # Reshape (..., n*3) to (-1, 3)
+    x = x.reshape(-1, 3)
+
+    # Convert axis-angle to rotation matrix
+    rotmat = rotvec_to_rotmat(x)  # Shape (-1, 3, 3)
+
+    # take first two rows of rotation matrix
+    sixd = rotmat[..., :2, :]  # Shape (-1, 2, 3)
+
+    # Reshape back to original dimensions (..., n*6)
+    return sixd.reshape(*dims[:-1], dims[-1] * 2)
+
+
+def test_sixd_conversion() -> None:
+    """Test the conversion between 6D and axis-angle representations.
+
+    Also test if gradients are propagated correctly.
+    """
+    tests = [
+        torch.randn(6),
+        torch.randn(10, 100, 100, 96),
+        torch.randn(3, 4, 5, 2, 6),
+    ]
+    for test in tests:
+        print(f"{test.shape}: {loop_consistency_test(test)}")
+
+    # test if the mano conversion is consistent
+    x = torch.randn(1, 61)
+    y = mano_to_sixd(x)
+    x_ = sixd_to_mano(y)
+    print("Mano Conversion works: ", torch.allclose(x, x_, atol=1e-5))
+
+    # test to see if gradients are propagated correctly
+    # the reversed process gets stuck in a local minimum
+    x = torch.randn(1, 3, requires_grad=True)
+    print("Input tensor:", x)
+    x_ = torch.randn(1, 3, requires_grad=True)
+    y = axisang_to_sixd(x).detach()
+
+    optimizer = torch.optim.SGD([x_], lr=0.1)  # SGD optimizer with learning rate 0.01
+
+    num_iterations = 500
+    for i in range(num_iterations):
+        optimizer.zero_grad()
+        x6 = axisang_to_sixd(x_)  # dummy operation
+        loss = torch.mean((y - x6) ** 2)
+        loss.backward()
+        optimizer.step()
+
+        if i % 100 == 0:
+            print(f"Iteration {i}: Loss = {loss.item()}")
+
+    print("Final optimized input_tensor:", x_)
+
+
+def loop_consistency_test(x6: torch.Tensor) -> tuple[bool, torch.Tensor]:
+    """Test the consistency of the conversion functions.
+
+    Args:
+        x6 (torch.Tensor): Input tensor with shape (..., n*6)
+
+    Returns:
+        tuple[bool, torch.Tensor]: A tuple containing:
+            - A boolean indicating if the conversion is consistent.
+    - The maximum error in the conversion.
+
+    """
+    x3 = sixd_to_axisang(x6)
+    x6_ = axisang_to_sixd(x3)
+    x3_ = sixd_to_axisang(x6_)
+    x6__ = axisang_to_sixd(x3_)
+    error = torch.reshape(x6_ - x6__, (1, -1))
+    return torch.allclose(x6_, x6__, atol=1e-5), torch.max(torch.abs(error))

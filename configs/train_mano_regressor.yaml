@@ -17,10 +17,14 @@ model:
     keypoints_2d: 0.01
     global_orientation: 1
     pose: 1
-    shape: 1
+    shape: 0.1
+    keypoint_diversity: 1
+    temporal_diversity: 1
+  sixd: True
+  mano_params: 109
+  mean_mano_params_location: "/cluster/project/cvg/students/mzamboni/3D-hand-FM/external/mano_mean_params.npz"
 
-transforms:
-  - VideoColorJitter
+transforms: null
 
 logger:
   name: "run_pretrained"
