@@ -167,72 +167,71 @@ class H2OLastFrameDataset(H2ODataset):
 
         # Calculate step and target frame
         step = int(self.base_framerate // self.fps)
-        target_frame = start_frame + (self.num_frames - 1) * step
 
-        # Get frames for the clip
+        # Get frames and data for the clip
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
+            mano_left, mano_right = self._get_mano_params(mano_reader, start_frame, self.num_frames, step)
+            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
+            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
-
-        # Get MANO parameters for the target frame
-        if self.cache:
-            mano_left, mano_right = self._get_mano_params(mano_reader, target_frame, 1, 1)
-            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, target_frame, 1, 1)
-            joints_left, joints_right = self._get_joints_data(joints_reader, target_frame, 1, 1)
-        else:
-            mano_left, mano_right = self._get_mano_params.__wrapped__(mano_reader, target_frame, 1, 1)
-            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(bbox_reader, target_frame, 1, 1)
-            joints_left, joints_right = self._get_joints_data.__wrapped__(joints_reader, target_frame, 1, 1)
+            mano_left, mano_right = self._get_mano_params.__wrapped__(mano_reader, start_frame, self.num_frames, step)
+            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(bbox_reader, start_frame, self.num_frames, step)
+            joints_left, joints_right = self._get_joints_data.__wrapped__(
+                joints_reader,
+                start_frame,
+                self.num_frames,
+                step,
+            )
 
         # Convert to tensors
         clip = torch.from_numpy(np.stack(frames))
-        mano_current = torch.from_numpy(mano_right[0] if self.return_right_hand else mano_left[0])
-        bbox_current = torch.from_numpy(bbox_right[0] if self.return_right_hand else bbox_left[0])
-        joints_current = torch.from_numpy(joints_right[0] if self.return_right_hand else joints_left[0])
+        mano_sequence = torch.from_numpy(np.stack(mano_right if self.return_right_hand else mano_left))
+        bbox_current = torch.from_numpy(np.stack(bbox_right if self.return_right_hand else bbox_left))
+        joints_sequence = torch.from_numpy(np.stack(joints_right if self.return_right_hand else joints_left))
         intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
 
-        # Add time dimension to target tensors
-        mano_current = mano_current.unsqueeze(0)  # Add time dimension
-        joints_current = joints_current.unsqueeze(0)  # Add time dimension
-        bbox_current = bbox_current.unsqueeze(0)  # Add time dimension
-        intrinsics = intrinsics.unsqueeze(0)  # Add time dimension
-
-        # Project joints to 2D
-        mano_trans = mano_current[..., :3].unsqueeze(0).clone()
+        # Project joints to 2D for all frames
+        mano_trans = mano_sequence[..., :3].unsqueeze(1).clone()
         # Scale to milimeters
         mano_trans = mano_trans * 1000
-        joints_2d_current = project_joints_to_2d(
-            (joints_current + mano_trans).unsqueeze(0),
+        joints_2d_sequence = project_joints_to_2d(
+            (joints_sequence + mano_trans).unsqueeze(0),
             intrinsics,
         ).squeeze(0)
 
         # Apply CropHand transform for the current hand only
-        clip_current, joints_2d_current = self.crop_transform(
+        clip_current, joints_2d_sequence = self.crop_transform(
             clip,
             bbox_current,
-            joints_2d_current,
+            joints_2d_sequence,
         )
 
         # Mirror if left hand
         if not self.return_right_hand:
-            clip_current, mano_current, joints_current, joints_2d_current = self.mirror_transform(
+            clip_current, mano_sequence, joints_sequence, joints_2d_sequence = self.mirror_transform(
                 clip_current,
-                mano_current,
-                joints_current,
-                joints_2d_current,
+                mano_sequence,
+                joints_sequence,
+                joints_2d_sequence,
             )
 
         # Apply additional transforms if provided
         if self.transforms is not None:
             for transform in self.transforms:
-                clip_current, mano_current, intrinsics = transform(
+                clip_current, mano_sequence, intrinsics = transform(
                     clip_current,
-                    mano_current,
+                    mano_sequence,
                     intrinsics,
                 )
 
         # Normalize the cropped clip
         clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+
+        # Get only the last frame's parameters for the target
+        mano_current = mano_sequence[-1:]  # Shape: (1, 61)
+        joints_current = joints_sequence[-1:]  # Shape: (1, J, 3)
+        joints_2d_current = joints_2d_sequence[-1:]  # Shape: (1, J, 2)
 
         return clip_current, mano_current, joints_current, joints_2d_current
