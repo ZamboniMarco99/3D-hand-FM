@@ -212,6 +212,7 @@ class VideoMANORegressor(pl.LightningModule):
         focal_length: float | None = None,
         sixd: bool = False,
         mean_mano_params_location: str = "./external/mean_mano_params.npz",
+        last_frame_only: bool = False,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -230,6 +231,7 @@ class VideoMANORegressor(pl.LightningModule):
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
             sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
             mean_mano_params_location (str, optional): Location of the mean MANO parameters.
+            last_frame_only (bool, optional): Whether to predict only the last frame. Defaults to False.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -244,6 +246,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         self.save_hyperparameters()
         self.sixd = sixd
+        self.last_frame_only = last_frame_only
 
         # Create default camera intrinsic matrix
         self.register_buffer(
@@ -282,17 +285,28 @@ class VideoMANORegressor(pl.LightningModule):
             self.num_pose_params = 45
 
         # Regressors for parameters
-        self.regressor_trans = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
-        )
-
-        self.regressor_pose = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
-        )
-
-        self.regressor_shape = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
-        )
+        if last_frame_only:
+            # Single frame output
+            self.regressor_trans = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_trans_params),
+            )
+            self.regressor_pose = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_pose_params),
+            )
+            self.regressor_shape = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_shape_params),
+            )
+        else:
+            # Multi-frame output
+            self.regressor_trans = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
+            )
+            self.regressor_pose = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+            )
+            self.regressor_shape = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
+            )
 
         self.mano_model = ManoLayer(
             mano_root=mano_root,
