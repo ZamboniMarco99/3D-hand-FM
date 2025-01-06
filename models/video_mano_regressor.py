@@ -515,14 +515,15 @@ class VideoMANORegressor(pl.LightningModule):
         mae = F.l1_loss(y_pred, y)
         pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        on_step = self.last_frame_only
+        self.log("train/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("train/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
-            self.log(f"train/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(f"train/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -569,14 +570,15 @@ class VideoMANORegressor(pl.LightningModule):
         mae = F.l1_loss(y_pred, y)
         pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        on_step = self.last_frame_only
+        self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
-            self.log(f"val/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(f"val/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.
