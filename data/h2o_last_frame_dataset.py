@@ -205,12 +205,12 @@ class H2OLastFrameDataset(H2ODataset):
         joints_2d_current = project_joints_to_2d(
             (joints_current + mano_trans).unsqueeze(0),
             intrinsics,
-        )
+        ).squeeze(0)
 
         # Apply CropHand transform for the current hand only
         clip_current, joints_2d_current = self.crop_transform(
             clip,
-            bbox_current.unsqueeze(0).expand(self.num_frames, -1),  # Expand bbox to all frames
+            bbox_current,
             joints_2d_current,
         )
 
