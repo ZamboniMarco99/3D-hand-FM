@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from data.h2o_datamodule import H2ODataModule, LastFrameH2ODataModule
+from data.h2o import H2ODataModule
 from data.transforms import VideoColorJitter, VideoMirror, VideoRandomRotation
 from models.video_mano_regressor import VideoMANORegressor
 
@@ -36,8 +36,7 @@ def main(cfg: DictConfig) -> None:
         transforms = None
 
     # Create dataset and dataloaders
-    datamodule_class = LastFrameH2ODataModule if cfg.model.last_frame_only else H2ODataModule
-    datamodule = datamodule_class(
+    datamodule = H2ODataModule(
         dataset_prefix=cfg.data.dataset_prefix,
         cameras=cfg.data.cameras,
         num_frames=cfg.data.num_frames,
@@ -47,6 +46,7 @@ def main(cfg: DictConfig) -> None:
         crop_size=cfg.data.crop_size,
         padding_factor=cfg.data.padding_factor,
         transforms=transforms,
+        dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
     )
     logger.info("DataModule initialized")
 
