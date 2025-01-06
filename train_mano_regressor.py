@@ -4,8 +4,8 @@ import logging
 import os
 
 import hydra
-import torch
 import pytorch_lightning as pl
+import torch
 from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -22,7 +22,7 @@ def main(cfg: DictConfig) -> None:
     logging.basicConfig(level=cfg.log_level)
     logger = logging.getLogger(__name__)
 
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision("high")
 
     transforms = []
     if cfg.transforms is not None:
