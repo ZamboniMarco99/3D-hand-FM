@@ -282,7 +282,7 @@ class VideoMANORegressor(pl.LightningModule):
         if sixd:
             self.num_pose_params = 96
         else:
-            self.num_pose_params = 45
+            self.num_pose_params = 48
 
         # Regressors for parameters
         if last_frame_only:
