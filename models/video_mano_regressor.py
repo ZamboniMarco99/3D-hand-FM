@@ -344,11 +344,14 @@ class VideoMANORegressor(pl.LightningModule):
         # Reshape the outputs
         hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
 
-        # Add mean MANO parameters
-        final_hand_params = hand_params + torch.concat(
-            (self.init_trans, self.init_pose, self.init_shape),
-            dim=-1,
-        )
+        if self.sixd:
+            # Add mean MANO parameters
+            final_hand_params = hand_params + torch.concat(
+                (self.init_trans, self.init_pose, self.init_shape),
+                dim=-1,
+            )
+        else:
+            final_hand_params = hand_params
 
         hand_joints = get_mano_joints(
             final_hand_params,
