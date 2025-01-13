@@ -212,6 +212,7 @@ class VideoMANORegressor(pl.LightningModule):
         focal_length: float | None = None,
         sixd: bool = False,
         mean_mano_params_location: str = "./external/mean_mano_params.npz",
+        last_frame_only: bool = False,
     ) -> None:
         """Initialize the VideoMANORegressor model.
 
@@ -230,6 +231,7 @@ class VideoMANORegressor(pl.LightningModule):
             focal_length (float | None, optional): Focal length for camera intrinsics. Defaults to width/2.
             sixd (bool, optional): Whether to use 6D pose representation. Defaults to False.
             mean_mano_params_location (str, optional): Location of the mean MANO parameters.
+            last_frame_only (bool, optional): Whether to predict only the last frame. Defaults to False.
 
         Note:
             The model uses an MViT v2 Small backbone as the encoder, followed by a regressor
@@ -244,6 +246,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         self.save_hyperparameters()
         self.sixd = sixd
+        self.last_frame_only = last_frame_only
 
         # Create default camera intrinsic matrix
         self.register_buffer(
@@ -279,20 +282,31 @@ class VideoMANORegressor(pl.LightningModule):
         if sixd:
             self.num_pose_params = 96
         else:
-            self.num_pose_params = 45
+            self.num_pose_params = 48
 
         # Regressors for parameters
-        self.regressor_trans = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
-        )
-
-        self.regressor_pose = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
-        )
-
-        self.regressor_shape = nn.Sequential(
-            nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
-        )
+        if last_frame_only:
+            # Single frame output
+            self.regressor_trans = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_trans_params),
+            )
+            self.regressor_pose = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_pose_params),
+            )
+            self.regressor_shape = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_shape_params),
+            )
+        else:
+            # Multi-frame output
+            self.regressor_trans = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
+            )
+            self.regressor_pose = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+            )
+            self.regressor_shape = nn.Sequential(
+                nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
+            )
 
         self.mano_model = ManoLayer(
             mano_root=mano_root,
@@ -330,11 +344,14 @@ class VideoMANORegressor(pl.LightningModule):
         # Reshape the outputs
         hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
 
-        # Add mean MANO parameters
-        final_hand_params = hand_params + torch.concat(
-            (self.init_trans, self.init_pose, self.init_shape),
-            dim=-1,
-        )
+        if self.sixd:
+            # Add mean MANO parameters
+            final_hand_params = hand_params + torch.concat(
+                (self.init_trans, self.init_pose, self.init_shape),
+                dim=-1,
+            )
+        else:
+            final_hand_params = hand_params
 
         hand_joints = get_mano_joints(
             final_hand_params,
@@ -427,7 +444,8 @@ class VideoMANORegressor(pl.LightningModule):
 
         # Add new diversity losses
         kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d)
-        temp_diversity_loss = temporal_diversity_loss(y_pred)
+
+        temp_diversity_loss = 0 if self.last_frame_only else temporal_diversity_loss(y_pred)
 
         if self.hparams.loss_weights is None:
             losses = {
@@ -500,14 +518,15 @@ class VideoMANORegressor(pl.LightningModule):
         mae = F.l1_loss(y_pred, y)
         pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        self.log("train/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("train/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("train/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        on_step = self.last_frame_only
+        self.log("train/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("train/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
-            self.log(f"train/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(f"train/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
         return loss
 
@@ -554,14 +573,15 @@ class VideoMANORegressor(pl.LightningModule):
         mae = F.l1_loss(y_pred, y)
         pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
 
-        self.log("val/loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/mean_mse", mse, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mae", mae, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje", mje, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_mje_2d", mje_2d, on_step=False, on_epoch=True, sync_dist=True)
-        self.log("val/mean_pamje", pamje, on_step=False, on_epoch=True, sync_dist=True)
+        on_step = self.last_frame_only
+        self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
-            self.log(f"val/losses/{key}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(f"val/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         """Configure the optimizer for the VideoMANORegressor model.

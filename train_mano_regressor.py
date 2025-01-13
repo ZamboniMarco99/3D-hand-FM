@@ -10,7 +10,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from data.h2o_datamodule import H2ODataModule
+from data.h2o import H2ODataModule
 from data.transforms import VideoColorJitter, VideoMirror, VideoRandomRotation
 from models.video_mano_regressor import VideoMANORegressor
 
@@ -46,6 +46,7 @@ def main(cfg: DictConfig) -> None:
         crop_size=cfg.data.crop_size,
         padding_factor=cfg.data.padding_factor,
         transforms=transforms,
+        dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
     )
     logger.info("DataModule initialized")
 
@@ -64,6 +65,7 @@ def main(cfg: DictConfig) -> None:
         mano_params=cfg.model.mano_params,
         sixd=cfg.model.sixd,
         mean_mano_params_location=cfg.model.mean_mano_params_location,
+        last_frame_only=cfg.model.last_frame_only,
     )
     logger.info("Model initialized")
 
