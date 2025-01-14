@@ -109,7 +109,7 @@ class ArcticDataset(torch.utils.data.Dataset):
                     VideoReader(
                         video_path=None,
                         frame_dir_path=frame_dir_path,
-                        fmt_frame_fn=lambda x: f"{x:06d}.jpg",
+                        fmt_frame_fn=lambda x: f"{x:05d}.jpg",
                     ),
                 )
 
@@ -137,7 +137,7 @@ class ArcticDataset(torch.utils.data.Dataset):
                 self.bbox_readers.append(
                     BboxReader(
                         bbox_dir_path=bbox_dir_path,
-                        fmt_frame_fn=lambda x: f"{x:06d}.txt",
+                        fmt_frame_fn=lambda x: f"{x:05d}.txt",
                     ),
                 )
 
@@ -145,7 +145,7 @@ class ArcticDataset(torch.utils.data.Dataset):
                 self.joints_readers.append(
                     JointsReader(
                         joints_dir_path=joints_dir_path,
-                        fmt_frame_fn=lambda x: f"{x:06d}.json",
+                        fmt_frame_fn=lambda x: f"{x:05d}.json",
                     ),
                 )
 
