@@ -141,13 +141,13 @@ class ManoReader:
 
         mano_params_left = {
             "tran": left_hand_data["trans"][frame_idx],
-            "pose": left_hand_data["pose"],
-            "shape": np.concatenate((left_hand_data["rot"], left_hand_data["shape"]), axis=1)[frame_idx],
+            "pose": np.concatenate((left_hand_data["rot"], left_hand_data["pose"]), axis=1)[frame_idx],
+            "shape": left_hand_data["shape"],
         }
         mano_params_right = {
             "tran": right_hand_data["trans"][frame_idx],
-            "pose": right_hand_data["pose"],
-            "shape": np.concatenate((right_hand_data["rot"], right_hand_data["shape"]), axis=1)[frame_idx],
+            "pose": np.concatenate((right_hand_data["rot"], right_hand_data["pose"]), axis=1)[frame_idx],
+            "shape": right_hand_data["shape"],
         }
         return np.concatenate(list(mano_params_left.values())), np.concatenate(list(mano_params_right.values()))
 
