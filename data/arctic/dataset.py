@@ -10,7 +10,6 @@ Example usage:
     dataset = ArcticDataset(
         dataset_prefix='/path/to/dataset',
         scenes=['scene1', 'scene2'],
-        cameras=['cam1', 'cam2'],
         num_frames=100,
         fps=7.5
     )
@@ -53,7 +52,6 @@ class ArcticDataset(torch.utils.data.Dataset):
     Args:
         dataset_prefix (str): The root directory path of the dataset.
         scenes (list[str]): List of scene names to include in the dataset.
-        cameras (list[str]): List of camera names to include in the dataset.
         num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
 
     """
@@ -62,7 +60,6 @@ class ArcticDataset(torch.utils.data.Dataset):
         self,
         dataset_prefix: str,
         scenes: list[str],
-        cameras: list[str],
         num_frames: int | None = None,
         fps: float = 7.5,
         cache: bool = True,
@@ -75,7 +72,6 @@ class ArcticDataset(torch.utils.data.Dataset):
         Args:
             dataset_prefix (str): The root directory path of the dataset.
             scenes (list[str]): List of scene names to include in the dataset.
-            cameras (list[str]): List of camera names to include in the dataset.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
             fps (float, optional): Desired frames per second. Defaults to 7.5.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
@@ -101,12 +97,12 @@ class ArcticDataset(torch.utils.data.Dataset):
         self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
         self.mirror_transform = VideoMirror(p=1)
 
-        for scene in scenes:
-            images_dir_path = "cropped_image"
-            data_path = "raw_seqs"
-            hand_bboxes_path = "hand_bbox"
-            joints_path = "joints"
+        images_dir_path = "cropped_images"
+        data_path = "raw_seqs"
+        hand_bboxes_path = "hand_bbox"
+        joints_path = "joints"
 
+        for scene in scenes:
             for video in os.listdir(Path(dataset_prefix) / images_dir_path / scene):
                 frame_dir_path = Path(dataset_prefix) / images_dir_path / scene / video
                 self.video_readers.append(
