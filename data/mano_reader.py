@@ -35,6 +35,7 @@ class ManoReader:
         mano_dir_path: str | Path,
         assumed_fps: float | None = None,
         fmt_frame_fn: Callable[[int], str] | None = None,
+        data_format: str | None = None,
     ) -> None:
         """Initialize the ManoReader.
 
@@ -44,11 +45,13 @@ class ManoReader:
                 If None, no frame rate conversion will be performed. Defaults to None.
             fmt_frame_fn (Callable[[int], str] | None, optional): Function to transform frame indexes into filenames.
                 If None, a default naming convention will be used. Defaults to None.
+            data_format (str | None, optional): Format of the MANO data files. Defaults to None.
 
         """
         self.mano_dir_path = Path(mano_dir_path)
         self.assumed_fps = assumed_fps
         self.fmt_frame_fn = fmt_frame_fn
+        self.data_format = data_format
 
         self.mano_len = len(list(self.mano_dir_path.glob("*.txt")))
 
@@ -120,6 +123,34 @@ class ManoReader:
         mano_params_left, mano_params_right = self.decode_mano(np.loadtxt(file_path, dtype=np.float32))
         return np.concatenate(list(mano_params_left.values())), np.concatenate(list(mano_params_right.values()))
 
+    def get_mano_arctic(self, data: dict, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
+        """Retrieve MANO parameters for a single frame in the Arctic dataset format.
+
+        Args:
+            data (dict): Dictionary containing MANO parameters for both hands.
+            frame_idx (int): The index of the frame to retrieve.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays:
+                - The first array contains MANO parameters for the left hand.
+                - The second array contains MANO parameters for the right hand.
+
+        """
+        left_hand_data = data["left"]
+        right_hand_data = data["right"]
+
+        mano_params_left = {
+            "tran": left_hand_data["trans"][frame_idx],
+            "pose": left_hand_data["pose"],
+            "shape": np.concatenate((left_hand_data["shape"], left_hand_data["shape"]), axis=1)[frame_idx],
+        }
+        mano_params_right = {
+            "tran": right_hand_data["trans"][frame_idx],
+            "pose": right_hand_data["pose"],
+            "shape": np.concatenate((right_hand_data["shape"], right_hand_data["shape"]), axis=1)[frame_idx],
+        }
+        return np.concatenate(list(mano_params_left.values())), np.concatenate(list(mano_params_right.values()))
+
     def get_mano_sequence(self, frame_idxs: list[int]) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Retrieve MANO parameters for a sequence of frames.
 
@@ -136,8 +167,13 @@ class ManoReader:
         """
         left_hands = []
         right_hands = []
+        if self.data_format == "arctic":
+            data = np.load(self.mano_dir_path, allow_pickle=True).item()
         for frame_idx in frame_idxs:
-            left, right = self.get_mano(frame_idx)
+            if self.data_format == "arctic":
+                left, right = self.get_mano_arctic(data, frame_idx)
+            else:
+                left, right = self.get_mano(frame_idx)
             left_hands.append(left)
             right_hands.append(right)
         return left_hands, right_hands
@@ -171,4 +207,7 @@ class ManoReader:
             FileNotFoundError: If the MANO file for the specified frame is not found.
 
         """
+        if self.data_format == "arctic":
+            data = np.load(self.mano_dir_path, allow_pickle=True).item()
+            return self.get_mano_arctic(data, idx).values()
         return self.get_mano(idx).values()
