@@ -1,0 +1,429 @@
+"""Dataset class for Arctic dataset.
+
+This module provides the ArcticDataset class, which is designed to handle
+multiple video sequences and corresponding MANO hand pose parameters from the Arctic dataset
+for machine learning tasks. It utilizes the VideoReader class to efficiently load and
+process video frames, and the ManoReader class to load MANO parameters, across different
+scenes and camera views.
+
+Example usage:
+    dataset = ArcticDataset(
+        dataset_prefix='/path/to/dataset',
+        scenes=['scene1', 'scene2'],
+        cameras=['cam1', 'cam2'],
+        num_frames=100,
+        fps=7.5
+    )
+"""
+
+import os
+from functools import cache
+from pathlib import Path
+
+import numpy as np
+import torch
+from torch import nn
+from torchvision.transforms import functional as F  # noqa: N812
+
+from data.bbox_reader import BboxReader
+from data.joints_reader import JointsReader
+from data.mano_reader import ManoReader
+from data.transforms import CropHand, VideoMirror
+from data.video_reader import VideoReader
+from models.utils import project_joints_to_2d
+
+
+class ArcticDataset(torch.utils.data.Dataset):
+    """A dataset class for handling Arctic video data and MANO parameters.
+
+    This class is designed to work with the Arctic dataset, which consists of multiple
+    video sequences and corresponding MANO hand pose parameters across different
+    scenes and camera views. It utilizes the VideoReader class to efficiently load
+    and process video frames, and the ManoReader class to load MANO parameters.
+
+    Attributes:
+        video_readers (list): A list of VideoReader instances, one for each video in the dataset.
+        mano_readers (list): A list of ManoReader instances, one for each MANO sequence in the dataset.
+        bbox_readers (list): A list of BboxReader instances, one for each Bbox sequence in the dataset.
+        camera_intrinsics (list): A list of camera intrinsic matrices, one for each camera in the dataset.
+        num_frames (int | None): The number of frames to include per video clip. If None, all frames are included.
+        num_clips (int): The total number of clips in the dataset.
+        clip_to_data (dict): Maps clip indices to corresponding video reader, MANO reader, bbox reader, and start frame.
+
+    Args:
+        dataset_prefix (str): The root directory path of the dataset.
+        scenes (list[str]): List of scene names to include in the dataset.
+        cameras (list[str]): List of camera names to include in the dataset.
+        num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
+
+    """
+
+    def __init__(
+        self,
+        dataset_prefix: str,
+        scenes: list[str],
+        cameras: list[str],
+        num_frames: int | None = None,
+        fps: float = 7.5,
+        cache: bool = True,
+        transforms: list[nn.Module] | None = None,
+        crop_size: int = 224,
+        padding_factor: float = 1.2,
+    ) -> None:
+        """Initialize the ArcticDataset.
+
+        Args:
+            dataset_prefix (str): The root directory path of the dataset.
+            scenes (list[str]): List of scene names to include in the dataset.
+            cameras (list[str]): List of camera names to include in the dataset.
+            num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
+            fps (float, optional): Desired frames per second. Defaults to 7.5.
+            cache (bool, optional): If True, enable caching of video frames. Defaults to True.
+            transforms (list[nn.Module] | None, optional): List of video transform modules to apply. Each transform
+                should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same tuple
+                with transformed tensors. Defaults to None.
+            crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+            padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
+
+        """
+        self.video_readers = []
+        self.mano_readers = []
+        self.bbox_readers = []
+        self.joints_readers = []
+        self.camera_intrinsics = []
+        self.num_clips = 0
+        self.num_frames = num_frames
+        self.fps = fps
+        self.base_framerate = 30  # Arctic dataset is recorded at 30 fps
+        self.cache = cache
+        self.transforms = transforms
+        self.clip_to_data = {}
+        self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
+        self.mirror_transform = VideoMirror(p=1)
+
+        for scene in scenes:
+            images_dir_path = "cropped_image"
+            data_path = "raw_seqs"
+            hand_bboxes_path = "hand_bbox"
+            joints_path = "joints"
+
+            for video in os.listdir(Path(dataset_prefix) / images_dir_path / scene):
+                frame_dir_path = Path(dataset_prefix) / images_dir_path / scene / video
+                self.video_readers.append(
+                    VideoReader(
+                        video_path=None,
+                        frame_dir_path=frame_dir_path,
+                        fmt_frame_fn=lambda x: f"{x:06d}.jpg",
+                    ),
+                )
+
+                # TODO: Get actual intrinsics from the dataset
+                intrinsics = np.array(
+                    [
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                )
+                self.camera_intrinsics.append(intrinsics)
+
+                mano_dir_path = Path(dataset_prefix) / data_path / f"{scene}.mano.npy"
+                self.mano_readers.append(
+                    ManoReader(
+                        mano_dir_path=mano_dir_path,
+                        assumed_fps=30,
+                        data_format="arctic",
+                    ),
+                )
+
+                bbox_dir_path = Path(dataset_prefix) / hand_bboxes_path / scene / video
+                self.bbox_readers.append(
+                    BboxReader(
+                        bbox_dir_path=bbox_dir_path,
+                        fmt_frame_fn=lambda x: f"{x:06d}.txt",
+                    ),
+                )
+
+                joints_dir_path = Path(dataset_prefix) / joints_path / scene / video
+                self.joints_readers.append(
+                    JointsReader(
+                        joints_dir_path=joints_dir_path,
+                        fmt_frame_fn=lambda x: f"{x:06d}.json",
+                    ),
+                )
+
+                self.clip_to_data[self.num_clips] = (
+                    self.video_readers[-1],
+                    self.mano_readers[-1],
+                    self.bbox_readers[-1],
+                    self.joints_readers[-1],
+                    self.camera_intrinsics[-1],
+                )
+
+                # Calculate the number of clips based on the desired fps
+                step = int(self.base_framerate // self.fps)
+                full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
+                partials = max(
+                    (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
+                    0,
+                )
+                total_len = full_starts * step + partials
+                self.num_clips += total_len
+
+    def __len__(self) -> int:
+        """Get the total number of clips in the dataset.
+
+        Returns:
+            int: The number of clips in the dataset.
+
+        """
+        return 2 * self.num_clips  # Double for left and right hands
+
+    def _get_clip_data(
+        self,
+        clip_idx: int,
+    ) -> tuple[VideoReader, ManoReader, BboxReader, JointsReader, np.ndarray, int]:
+        """Get the readers, camera intrinsics and start frame for a given clip index.
+
+        Args:
+            clip_idx (int): The index of the clip in the dataset.
+
+        Returns:
+            tuple[VideoReader, ManoReader, BboxReader, JointsReader, np.ndarray, int]: A tuple containing:
+                - The VideoReader instance for the clip.
+                - The ManoReader instance for the clip.
+                - The BboxReader instance for the clip.
+                - The JointsReader instance for the clip.
+                - The camera intrinsic matrix with shape (3, 3).
+                - The start frame index of the clip within its video.
+
+        """
+        # Find the corresponding readers
+        video_idx, video_reader, mano_reader, bbox_reader, joints_reader, intrinsics = max(
+            (i, video, mano, bbox, joints, intrinsics)
+            for i, (video, mano, bbox, joints, intrinsics) in self.clip_to_data.items()
+            if i <= clip_idx
+        )
+
+        # Calculate the start frame of the clip within the video
+        clip_idx_in_video = clip_idx - video_idx
+        step = int(self.base_framerate // self.fps)
+        full = clip_idx_in_video // step
+        partial = clip_idx_in_video % step
+        start_frame = full * (step * self.num_frames) + partial
+
+        return video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame
+
+    @staticmethod
+    @cache
+    def _get_video_frames(video_reader: VideoReader, start_frame: int, num_frames: int, step: int) -> list[np.ndarray]:
+        """Get video frames from the video reader for a given clip.
+
+        Args:
+            video_reader (VideoReader): The video reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
+
+        Returns:
+            list[np.ndarray]: A list of video frames with shape (H, W, C).
+
+        """
+        frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames * step, step)))
+
+        # Normalize frames from uint8 to float32 with values between 0 and 1
+        normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
+        # Change shape from [H, W, C] to [C, H, W]
+        return [np.transpose(frame, (2, 0, 1)) for frame in normalized_frames]
+
+    @staticmethod
+    @cache
+    def _get_mano_params(
+        mano_reader: ManoReader,
+        start_frame: int,
+        num_frames: int,
+        step: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Get MANO parameters from the MANO reader for a given clip.
+
+        Args:
+            mano_reader (ManoReader): The MANO reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains MANO parameters for the left hand for each frame.
+                - The second list contains MANO parameters for the right hand for each frame.
+
+        """
+        return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+
+    @staticmethod
+    @cache
+    def _get_bbox_data(
+        bbox_reader: BboxReader,
+        start_frame: int,
+        num_frames: int,
+        step: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Get bounding box data from the bbox reader for a given clip.
+
+        Args:
+            bbox_reader (BboxReader): The bbox reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains bbox coordinates for the left hand for each frame.
+                - The second list contains bbox coordinates for the right hand for each frame.
+
+        """
+        return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+
+    @staticmethod
+    @cache
+    def _get_joints_data(
+        joints_reader: JointsReader,
+        start_frame: int,
+        num_frames: int,
+        step: int,
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+        """Get joints data from the joints reader for a given clip.
+
+        Args:
+            joints_reader (JointsReader): The joints reader instance.
+            start_frame (int): The start frame index.
+            num_frames (int): The number of frames to retrieve.
+            step (int): The step size between frames.
+
+        Returns:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+                - The first list contains joints coordinates for the left hand for each frame.
+                - The second list contains joints coordinates for the right hand for each frame.
+
+        """
+        return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
+
+        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
+        from a single video clip specified by the index. The frames are cropped around either
+        the left or right hand based on the index. If idx >= num_clips, the right hand is processed,
+        otherwise the left hand.
+
+        Args:
+            idx (int): The index of the video clip to retrieve. Values [0, num_clips-1] process left hand,
+                      values [num_clips, 2*num_clips-1] process right hand.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+                - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
+                  C is the number of channels (3), and H=W=output_size. Values are normalized with
+                  mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                - A tensor of MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of 3D joint coordinates with shape (T, J, 3), where T is the number of frames
+                  and J is the number of joints.
+                - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
+                  and J is the number of joints.
+
+        Raises:
+            IndexError: If the provided index is out of range [0, 2*num_clips-1].
+
+        """
+        if idx >= len(self):
+            msg = f"Index {idx} out of range. Total clips: {len(self)}"
+            raise IndexError(msg)
+
+        return_right_hand = False
+        if idx >= self.num_clips:
+            idx = idx - self.num_clips
+            return_right_hand = True
+
+        video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame = self._get_clip_data(idx)
+        step = int(self.base_framerate // self.fps)
+        if self.cache:
+            frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
+            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames, step)
+            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
+            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
+        else:
+            frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
+            mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
+                mano_reader,
+                start_frame,
+                self.num_frames,
+                step,
+            )
+            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(
+                bbox_reader,
+                start_frame,
+                self.num_frames,
+                step,
+            )
+            joints_left, joints_right = self._get_joints_data.__wrapped__(
+                joints_reader,
+                start_frame,
+                self.num_frames,
+                step,
+            )
+
+        # Convert list of numpy arrays to PyTorch tensors
+        clip = torch.from_numpy(np.stack(frames))
+        mano_left = torch.from_numpy(np.stack(mano_params_left))
+        mano_right = torch.from_numpy(np.stack(mano_params_right))
+        bbox_left = torch.from_numpy(np.stack(bbox_left))
+        bbox_right = torch.from_numpy(np.stack(bbox_right))
+        joints_left = torch.from_numpy(np.stack(joints_left))
+        joints_right = torch.from_numpy(np.stack(joints_right))
+        intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
+
+        if return_right_hand:
+            mano_current = mano_right
+            bbox_current = bbox_right
+            joints_current = joints_right
+        else:
+            mano_current = mano_left
+            bbox_current = bbox_left
+            joints_current = joints_left
+
+        mano_trans = mano_current[..., :3].unsqueeze(1).clone()
+        # Scale to milimeters
+        mano_trans = mano_trans * 1000
+        joints_2d_current = project_joints_to_2d(
+            (joints_current + mano_trans).unsqueeze(0),
+            intrinsics,
+        ).squeeze(0)
+
+        # Apply CropHand transform for the current hand only
+        clip_current, joints_2d_current = self.crop_transform(
+            clip,
+            bbox_current,
+            joints_2d_current,
+        )
+        if not return_right_hand:
+            clip_current, mano_current, joints_current, joints_2d_current = self.mirror_transform(
+                clip_current,
+                mano_current,
+                joints_current,
+                joints_2d_current,
+            )
+
+        # Apply additional transforms if provided
+        if self.transforms is not None:
+            for transform in self.transforms:
+                clip_current, mano_current, intrinsics = transform(
+                    clip_current,
+                    mano_current,
+                    intrinsics,
+                )
+        # Normalize the cropped clip
+        clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+
+        return clip_current, mano_current, joints_current, joints_2d_current
