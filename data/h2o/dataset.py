@@ -246,7 +246,7 @@ class H2ODataset(torch.utils.data.Dataset):
         start_frame: int,
         num_frames: int,
         step: int,
-    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
+    ) -> tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]:
         """Get MANO parameters from the MANO reader for a given clip.
 
         Args:
@@ -256,9 +256,10 @@ class H2ODataset(torch.utils.data.Dataset):
             step (int): The step size between frames.
 
         Returns:
-            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
+            tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]: A tuple containing:
                 - The first list contains MANO parameters for the left hand for each frame.
                 - The second list contains MANO parameters for the right hand for each frame.
+                - The third list contains dictionaries indicating availability of each hand for each frame.
 
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
@@ -311,7 +312,7 @@ class H2ODataset(torch.utils.data.Dataset):
         """
         return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
 
         This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
@@ -324,7 +325,7 @@ class H2ODataset(torch.utils.data.Dataset):
                       values [num_clips, 2*num_clips-1] process right hand.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
                   C is the number of channels (3), and H=W=output_size. Values are normalized with
                   mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
@@ -334,6 +335,8 @@ class H2ODataset(torch.utils.data.Dataset):
                   and J is the number of joints.
                 - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
                   and J is the number of joints.
+                - A tensor of hand availability flags with shape (T,), where T is the number of frames.
+                  1 indicates the hand is available, 0 indicates it is not.
 
         Raises:
             IndexError: If the provided index is out of range [0, 2*num_clips-1].
@@ -352,12 +355,17 @@ class H2ODataset(torch.utils.data.Dataset):
         step = int(self.base_framerate // self.fps)
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
-            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames, step)
+            mano_params_left, mano_params_right, hand_availables = self._get_mano_params(
+                mano_reader,
+                start_frame,
+                self.num_frames,
+                step,
+            )
             bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
             joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
-            mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
+            mano_params_left, mano_params_right, hand_availables = self._get_mano_params.__wrapped__(
                 mano_reader,
                 start_frame,
                 self.num_frames,
@@ -390,10 +398,12 @@ class H2ODataset(torch.utils.data.Dataset):
             mano_current = mano_right
             bbox_current = bbox_right
             joints_current = joints_right
+            hand_available = torch.tensor([h["right"] for h in hand_availables], dtype=torch.float32)
         else:
             mano_current = mano_left
             bbox_current = bbox_left
             joints_current = joints_left
+            hand_available = torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32)
 
         mano_trans = mano_current[..., :3].unsqueeze(1).clone()
         # Scale to milimeters
@@ -428,4 +438,4 @@ class H2ODataset(torch.utils.data.Dataset):
         # Normalize the cropped clip
         clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip_current, mano_current, joints_current, joints_2d_current
+        return clip_current, mano_current, joints_current, joints_2d_current, hand_available
