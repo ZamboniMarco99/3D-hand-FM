@@ -415,10 +415,6 @@ class CropHand:
                 # Get crop coordinates
                 crop = self.process_bbox(bbox[batch_idx, time_idx], h, w)
 
-                # TODO: Fix this workaround
-                if crop[0] == crop[1] == crop[2] == crop[3] == 0:
-                    crop = (0, 0, 10, 10)
-
                 # Crop and resize frame
                 frame_crop = video[batch_idx, time_idx, :, crop[1] : crop[3], crop[0] : crop[2]]
                 frame_resized = torch.nn.functional.interpolate(

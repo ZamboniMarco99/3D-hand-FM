@@ -43,7 +43,7 @@ ignore = [
     "FBT002",  # Permit boolean types in functions
     "S311",  # Permit non cryptographic random
 ]
-exclude = ["scripts"]
+exclude = ["scripts/*"]
 
 [tool.ruff]
 line-length = 120
