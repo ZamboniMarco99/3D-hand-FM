@@ -139,11 +139,14 @@ class H2ODataset(torch.utils.data.Dataset):
                         ),
                     )
 
-                    bbox_dir_path = Path(scene_path) / directory / camera / "hand_bbox"
+                    bbox_dir_path = Path(scene_path) / directory / camera / "predicted_bboxes.txt"
                     self.bbox_readers.append(
                         BboxReader(
-                            bbox_dir_path=bbox_dir_path,
-                            fmt_frame_fn=lambda x: f"{x:06d}.txt",
+                            bbox_path=bbox_dir_path,
+                            single_file=True,
+                            use_kalman=True,
+                            measurement_noise=0.1,
+                            min_bbox_diagonal=10,
                         ),
                     )
 
