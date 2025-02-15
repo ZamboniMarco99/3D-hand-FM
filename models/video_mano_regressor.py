@@ -407,7 +407,8 @@ class VideoMANORegressor(pl.LightningModule):
             true_hand_joints (torch.Tensor): Ground truth 3D keypoints.
             pred_keypoints_2d (torch.Tensor): Predicted 2D keypoints.
             true_keypoints_2d (torch.Tensor): Ground truth 2D keypoints.
-            hand_available (torch.Tensor): Boolean tensor indicating hand availability for each frame.
+            hand_available (torch.Tensor): Tensor of floats indicating hand availability for each frame
+                (1.0 for valid, 0.0 for invalid).
 
         Returns:
             torch.Tensor: The computed loss.

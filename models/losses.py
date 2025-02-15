@@ -16,7 +16,8 @@ def keypoint_diversity_loss(
     Args:
         predictions_2d: Tensor of shape (B, T, J, 2) where B is batch size,
             T is number of frames, J is number of joints, and 2 is for x,y coordinates.
-        hand_available: Tensor of shape (B, T) indicating which frames have valid hands.
+        hand_available: Tensor of shape (B, T) of floats indicating which frames have valid hands
+            (1.0 for valid, 0.0 for invalid).
         epsilon: Float, minimum distance threshold for diversity.
 
     Returns:
@@ -27,7 +28,7 @@ def keypoint_diversity_loss(
 
     # Reshape to handle each frame independently and apply hand availability mask
     points = predictions_2d.reshape(B * T, J, 2)  # Shape: (B*T, J, 2)
-    hand_available = hand_available.reshape(-1)  # Shape: (B*T)
+    hand_available = hand_available.reshape(-1).bool()  # Shape: (B*T)
 
     # Compute pairwise distances between keypoints for each frame
     dists = torch.cdist(points, points, p=2)  # Shape: (B*T, J, J)
@@ -37,6 +38,9 @@ def keypoint_diversity_loss(
 
     # Apply hand availability mask
     mask = mask & hand_available.unsqueeze(-1).unsqueeze(-1)  # Shape: (B*T, J, J)
+
+    # Convert mask to float for multiplication
+    mask = mask.float()
 
     # Compute diversity loss only for valid pairs (where mask is True)
     diversity_loss = F.relu(epsilon - dists) * mask  # Shape: (B*T, J, J)
@@ -63,18 +67,25 @@ def temporal_diversity_loss(
     Args:
         mano_params: Tensor of shape (B, T, P) where B is batch size,
             T is number of frames, and P is number of MANO parameters.
-        hand_available: Tensor of shape (B, T) indicating which frames have valid hands.
+        hand_available: Tensor of shape (B, T) of floats indicating which frames have valid hands
+            (1.0 for valid, 0.0 for invalid).
         epsilon: Float, minimum difference threshold between frames.
 
     Returns:
         loss: Scalar tensor representing the temporal diversity loss.
 
     """
+    # Convert hand_available to boolean
+    hand_available = hand_available.bool()
+
     # Compute differences between consecutive frames
     frame_diffs = mano_params[:, 1:] - mano_params[:, :-1]  # Shape: (B, T-1, P)
 
     # Create mask for consecutive valid frames
     valid_pairs = hand_available[:, 1:] & hand_available[:, :-1]  # Shape: (B, T-1)
+
+    # Convert valid_pairs to float for multiplication
+    valid_pairs = valid_pairs.float()
 
     # Compute L2 norm of differences along parameter dimension
     frame_diff_norms = torch.norm(frame_diffs, dim=-1)  # Shape: (B, T-1)
