@@ -23,7 +23,7 @@ class BboxReader:
     It supports Kalman filtering for tracking and predicting missing bboxes.
 
     Attributes:
-        bbox_dir_path (Path): Path to directory containing bbox files.
+        bbox_path (Path): Path to directory containing bbox files or single bbox file.
         fmt_frame_fn (Callable[[int], str] | None): Function to transform frame indexes into filenames.
         bbox_len (int): Total number of bbox files in the directory.
         single_file (bool): Whether reading from a single file with one bbox per line.
@@ -41,69 +41,177 @@ class BboxReader:
         use_kalman: bool = False,
         process_noise: float = 1e-4,
         measurement_noise: float = 3e-1,
+        min_bbox_diagonal: float = 50,
     ) -> None:
-        """Initialize the BboxReader.
-
-        Args:
-            bbox_path (str | Path): Path to directory containing bbox files or single bbox file.
-            fmt_frame_fn (Callable[[int], str] | None, optional): Function to transform frame indexes into filenames.
-                If None, a default naming convention will be used. Defaults to None.
-            single_file (bool, optional): Whether reading from a single file with one bbox per line.
-                Defaults to False.
-            use_kalman (bool, optional): Whether to use Kalman filtering for bbox tracking.
-                Defaults to False.
-            process_noise (float, optional): Process noise parameter for Kalman filter.
-                Defaults to 1e-4.
-            measurement_noise (float, optional): Measurement noise parameter for Kalman filter.
-                Defaults to 3e-1.
-
-        """
+        """Initialize the BboxReader."""
         self.bbox_path = Path(bbox_path)
         self.fmt_frame_fn = fmt_frame_fn
         self.single_file = single_file
         self.use_kalman = use_kalman
+        self.min_bbox_diagonal = min_bbox_diagonal
+        self.measurement_noise = measurement_noise
         self.filtered_left = None
         self.filtered_right = None
+        self.bboxes_left = None
+        self.bboxes_right = None
+        self.bbox_len = 0
 
-        # Load all bboxes
-        if single_file:
-            # Count lines in the file for total number of frames
-            with self.bbox_path.open() as f:
-                self.bbox_len = sum(1 for _ in f)
-            # Load all bboxes at once for single file mode
-            bboxes = np.loadtxt(self.bbox_path, dtype=np.float32)
-            if len(bboxes.shape) == 1:
-                # If only one bbox, reshape to 2D array
-                bboxes = bboxes.reshape(1, -1)
-            # Split into left and right hands
-            self.bboxes_left = bboxes[:, :4]
-            self.bboxes_right = bboxes[:, 4:]
-        else:
-            # Load all bboxes from directory
-            self.bbox_len = len(list(self.bbox_path.glob("*.txt")))
-            self.bboxes_left = np.zeros((self.bbox_len, 4), dtype=np.float32)
-            self.bboxes_right = np.zeros((self.bbox_len, 4), dtype=np.float32)
-            try:
-                for i in range(self.bbox_len):
-                    file_name = self.fmt_frame_fn(i)
-                    file_path = self.bbox_path / file_name
-                    if file_path.exists():
-                        bbox_data = np.loadtxt(file_path, dtype=np.float32)
-                        if len(bbox_data.shape) == 1:
-                            # Single bbox, split in half for left and right hands
-                            mid = len(bbox_data) // 2
-                            self.bboxes_left[i] = bbox_data[:mid]
-                            self.bboxes_right[i] = bbox_data[mid:]
-                        else:
-                            self.bboxes_left[i] = bbox_data[0]
-                            self.bboxes_right[i] = bbox_data[1]
-            except (FileNotFoundError, ValueError, IndexError):
-                # Keep zeros for missing or invalid bboxes
-                pass
+        self._load_bboxes()
 
         if use_kalman:
-            # Preprocess all bboxes with Kalman filtering
             self._preprocess_with_kalman(process_noise, measurement_noise)
+
+    def _load_bboxes(self) -> None:
+        """Load bounding boxes from file(s)."""
+        if self.single_file:
+            self._load_from_single_file()
+        else:
+            self._load_from_directory()
+
+    def _load_from_single_file(self) -> None:
+        """Load bounding boxes from a single file."""
+        with self.bbox_path.open() as f:
+            self.bbox_len = sum(1 for _ in f)
+
+        bboxes = np.loadtxt(self.bbox_path, dtype=np.float32)
+        if len(bboxes.shape) == 1:
+            bboxes = bboxes.reshape(1, -1)
+
+        self.bboxes_left = bboxes[:, :4]
+        self.bboxes_right = bboxes[:, 4:]
+
+    def _load_from_directory(self) -> None:
+        """Load bounding boxes from a directory of files."""
+        self.bbox_len = len(list(self.bbox_path.glob("*.txt")))
+        self.bboxes_left = np.zeros((self.bbox_len, 4), dtype=np.float32)
+        self.bboxes_right = np.zeros((self.bbox_len, 4), dtype=np.float32)
+
+        try:
+            for i in range(self.bbox_len):
+                file_path = self.bbox_path / self.fmt_frame_fn(i)
+                if file_path.exists():
+                    bbox_data = np.loadtxt(file_path, dtype=np.float32)
+                    if len(bbox_data.shape) == 1:
+                        mid = len(bbox_data) // 2
+                        self.bboxes_left[i] = bbox_data[:mid]
+                        self.bboxes_right[i] = bbox_data[mid:]
+                    else:
+                        self.bboxes_left[i] = bbox_data[0]
+                        self.bboxes_right[i] = bbox_data[1]
+        except (FileNotFoundError, ValueError, IndexError):
+            pass  # Keep zeros for missing or invalid bboxes
+
+    def _find_valid_measurements(self, bboxes: np.ndarray) -> tuple[list[int], list[np.ndarray], list[np.ndarray]]:
+        """Find valid measurements in the sequence of bboxes."""
+        valid_frames = []
+        valid_centers = []
+        valid_sizes = []
+
+        for i in range(self.bbox_len):
+            bbox = bboxes[i]
+            if not np.all(bbox == 0):
+                width = bbox[2] - bbox[0]
+                height = bbox[3] - bbox[1]
+                diagonal = np.sqrt(width**2 + height**2)
+
+                if diagonal >= self.min_bbox_diagonal:
+                    valid_frames.append(i)
+                    center = np.array([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2])
+                    size = np.array([width, height])
+                    valid_centers.append(center)
+                    valid_sizes.append(size)
+
+        return valid_frames, valid_centers, valid_sizes
+
+    def _interpolate_sequence(
+        self,
+        valid_frames: list[int],
+        valid_centers: list[np.ndarray],
+        valid_sizes: list[np.ndarray],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Interpolate missing frames between valid measurements."""
+        interpolated = np.zeros((self.bbox_len, 4), dtype=np.float32)
+        is_interpolated = np.zeros(self.bbox_len, dtype=bool)
+
+        if not valid_frames:
+            return interpolated, is_interpolated
+
+        # Process pairs of valid measurements
+        for i in range(len(valid_frames) - 1):
+            start_idx, end_idx = valid_frames[i], valid_frames[i + 1]
+            start_center, end_center = valid_centers[i], valid_centers[i + 1]
+            start_size, end_size = valid_sizes[i], valid_sizes[i + 1]
+
+            # Set start frame
+            interpolated[start_idx] = self._center_to_corners(start_center, start_size)
+
+            # Interpolate intermediate frames
+            for j in range(start_idx + 1, end_idx):
+                t = (j - start_idx) / (end_idx - start_idx)
+                center = start_center * (1 - t) + end_center * t
+                size = start_size * (1 - t) + end_size * t
+                interpolated[j] = self._center_to_corners(center, size)
+                is_interpolated[j] = True
+
+        # Set last valid frame
+        if valid_frames:
+            last_idx = valid_frames[-1]
+            interpolated[last_idx] = self._center_to_corners(valid_centers[-1], valid_sizes[-1])
+
+        return interpolated, is_interpolated
+
+    @staticmethod
+    def _center_to_corners(center: np.ndarray, size: np.ndarray) -> np.ndarray:
+        """Convert center and size to corner format."""
+        half_width, half_height = size[0] / 2, size[1] / 2
+        return np.array(
+            [
+                center[0] - half_width,  # x1
+                center[1] - half_height,  # y1
+                center[0] + half_width,  # x2
+                center[1] + half_height,  # y2
+            ],
+        )
+
+    def _apply_kalman_filter(
+        self,
+        kf: KalmanFilter,
+        interpolated: np.ndarray,
+        is_interpolated: np.ndarray,
+        forward: bool,
+    ) -> np.ndarray:
+        """Apply Kalman filtering to the interpolated sequence."""
+        filtered = np.zeros_like(interpolated)
+        sequence = range(self.bbox_len) if forward else range(self.bbox_len - 1, -1, -1)
+        last_measurement = None
+
+        for i in sequence:
+            bbox = interpolated[i]
+            if np.all(bbox == 0):
+                continue
+
+            # Convert to center format
+            cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            measurement = np.array([cx, cy, w, h])
+
+            if last_measurement is None:
+                kf.x[:4, 0] = measurement
+                kf.x[4:, 0] = 0  # Zero initial velocity
+                filtered[i] = bbox
+            else:
+                # Higher noise for interpolated values and size measurements
+                noise = self.measurement_noise * (10.0 if is_interpolated[i] else 1.0)
+                kf.R = np.eye(4) * noise
+                kf.R[2:4, 2:4] *= 2.0  # Even higher noise for size measurements
+
+                kf.predict()
+                kf.update(measurement)
+                filtered[i] = self._center_to_corners(kf.x[:2, 0], kf.x[2:4, 0])
+
+            last_measurement = measurement
+
+        return filtered
 
     def _filter_sequence(
         self,
@@ -111,53 +219,17 @@ class BboxReader:
         bboxes: np.ndarray,
         filtered: np.ndarray,
         forward: bool = True,
-        average: bool = False,
     ) -> np.ndarray:
-        """Apply Kalman filtering to a sequence of bboxes.
+        """Apply Kalman filtering to a sequence of bboxes."""
+        valid_frames, valid_centers, valid_sizes = self._find_valid_measurements(bboxes)
+        if not valid_frames:
+            return filtered
 
-        Args:
-            kf (KalmanFilter): Kalman filter instance.
-            bboxes (np.ndarray): Input bboxes to filter.
-            filtered (np.ndarray): Pre-allocated array for filtered bboxes.
-            forward (bool, optional): Whether to filter forward or backward. Defaults to True.
-            average (bool, optional): Whether to average with existing filtered values. Defaults to False.
-
-        Returns:
-            np.ndarray: Filtered bboxes.
-
-        """
-        last_valid = None
-        sequence = range(self.bbox_len) if forward else range(self.bbox_len - 1, -1, -1)
-
-        for i in sequence:
-            bbox = bboxes[i]
-            if not np.all(bbox == 0):
-                if last_valid is None:
-                    kf.x[:4] = bbox
-                    kf.x[4:] = 0
-                    filtered[i] = bbox if not average else (filtered[i] + bbox) / 2
-                else:
-                    kf.predict()
-                    kf.update(bbox)
-                    filtered[i] = kf.x[:4] if not average else (filtered[i] + kf.x[:4]) / 2
-                last_valid = bbox
-            elif last_valid is not None:
-                kf.predict()
-                filtered[i] = kf.x[:4] if not average else (filtered[i] + kf.x[:4]) / 2
-
-        return filtered
+        interpolated, is_interpolated = self._interpolate_sequence(valid_frames, valid_centers, valid_sizes)
+        return self._apply_kalman_filter(kf, interpolated, is_interpolated, forward)
 
     def _preprocess_with_kalman(self, process_noise: float, measurement_noise: float) -> None:
-        """Preprocess all bboxes with Kalman filtering.
-
-        This method applies Kalman filtering to all bboxes in both forward and backward directions
-        to achieve better smoothing and prediction of missing bboxes.
-
-        Args:
-            process_noise (float): Process noise parameter for Kalman filter.
-            measurement_noise (float): Measurement noise parameter for Kalman filter.
-
-        """
+        """Preprocess all bboxes with Kalman filtering."""
         # Initialize arrays for filtered bboxes
         filtered_left = np.zeros((self.bbox_len, 4), dtype=np.float32)
         filtered_right = np.zeros((self.bbox_len, 4), dtype=np.float32)
@@ -171,26 +243,18 @@ class BboxReader:
         # Backward pass to smooth predictions
         kf_left = self._init_kalman_filter(process_noise, measurement_noise)
         kf_right = self._init_kalman_filter(process_noise, measurement_noise)
-        filtered_left = self._filter_sequence(kf_left, self.bboxes_left, filtered_left, forward=False, average=True)
-        filtered_right = self._filter_sequence(kf_right, self.bboxes_right, filtered_right, forward=False, average=True)
+        filtered_left = self._filter_sequence(kf_left, self.bboxes_left, filtered_left, forward=False)
+        filtered_right = self._filter_sequence(kf_right, self.bboxes_right, filtered_right, forward=False)
 
-        # Store filtered bboxes
         self.filtered_left = filtered_left
         self.filtered_right = filtered_right
 
     @staticmethod
     def _init_kalman_filter(process_noise: float, measurement_noise: float) -> KalmanFilter:
-        """Initialize a Kalman filter for bbox tracking.
-
-        Args:
-            process_noise (float): Process noise parameter.
-            measurement_noise (float): Measurement noise parameter.
-
-        Returns:
-            KalmanFilter: Initialized Kalman filter.
-
-        """
+        """Initialize a Kalman filter for bbox tracking."""
         kf = KalmanFilter(dim_x=8, dim_z=4)  # State: [x, y, w, h, dx, dy, dw, dh]
+
+        # State transition matrix
         kf.F = np.array(
             [
                 [1, 0, 0, 0, 1, 0, 0, 0],  # x = x + dx
@@ -203,6 +267,8 @@ class BboxReader:
                 [0, 0, 0, 0, 0, 0, 0, 1],  # dh = dh
             ],
         )
+
+        # Measurement matrix
         kf.H = np.array(
             [
                 [1, 0, 0, 0, 0, 0, 0, 0],
@@ -211,82 +277,42 @@ class BboxReader:
                 [0, 0, 0, 1, 0, 0, 0, 0],
             ],
         )
-        kf.Q *= process_noise
-        kf.R *= measurement_noise
+
+        # Process noise matrix
+        kf.Q = np.eye(8) * process_noise
+        kf.Q[2:4, 2:4] *= 0.1  # Lower noise for w, h
+        kf.Q[6:8, 6:8] *= 0.1  # Lower noise for dw, dh
+
+        # Measurement noise matrix
+        kf.R = np.eye(4) * measurement_noise
+        kf.R[2:4, 2:4] *= 2.0  # Higher noise for width and height
+
         return kf
 
     def get_bbox(self, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
-        """Retrieve bbox coordinates for a single frame.
-
-        Args:
-            frame_idx (int): The index of the frame to retrieve.
-
-        Returns:
-            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays:
-                - The first array contains bbox coordinates for the left hand.
-                - The second array contains bbox coordinates for the right hand.
-                Each array has shape (4,) representing [x_min, y_min, x_max, y_max].
-
-        Raises:
-            IndexError: If the frame index is out of range.
-
-        """
+        """Get bounding box coordinates for a single frame."""
         if frame_idx >= self.bbox_len:
-            message = f"Frame index {frame_idx} out of range for bbox file with {self.bbox_len} frames"
-            raise IndexError(message)
+            msg = f"Frame index {frame_idx} out of range for bbox file with {self.bbox_len} frames"
+            raise IndexError(msg)
 
         if self.use_kalman:
-            # Return preprocessed bboxes
             return self.filtered_left[frame_idx], self.filtered_right[frame_idx]
         return self.bboxes_left[frame_idx], self.bboxes_right[frame_idx]
 
     def get_bbox_sequence(self, frame_idxs: list[int]) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        """Retrieve bbox coordinates for a sequence of frames.
-
-        Args:
-            frame_idxs (list[int]): List of frame indices to retrieve.
-
-        Returns:
-            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists:
-                - The first list contains bbox coordinates for the left hand for each frame.
-                - The second list contains bbox coordinates for the right hand for each frame.
-                Each numpy array in the lists has shape (4,) representing [x_min, y_min, x_max, y_max].
-
-        """
-        left_hands_bboxes = []
-        right_hands_bboxes = []
+        """Get bounding box coordinates for a sequence of frames."""
+        left_hands = []
+        right_hands = []
         for frame_idx in frame_idxs:
             left, right = self.get_bbox(frame_idx)
-            left_hands_bboxes.append(left)
-            right_hands_bboxes.append(right)
-        return left_hands_bboxes, right_hands_bboxes
+            left_hands.append(left)
+            right_hands.append(right)
+        return left_hands, right_hands
 
     def __len__(self) -> int:
-        """Get the total number of bbox files.
-
-        Returns:
-            int: The number of bbox files in the directory.
-
-        """
+        """Get the total number of frames."""
         return self.bbox_len
 
     def __getitem__(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
-        """Retrieve bbox coordinates for a single frame.
-
-        This method allows the BboxReader to be used as an iterable,
-        returning bbox coordinates based on the given index.
-
-        Args:
-            idx (int): The index of the frame to retrieve.
-
-        Returns:
-            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays:
-                - The first array contains bbox coordinates for the left hand.
-                - The second array contains bbox coordinates for the right hand.
-                Each array has shape (4,) representing [x_min, y_min, x_max, y_max].
-
-        Raises:
-            IndexError: If the frame index is out of range.
-
-        """
+        """Get bounding box coordinates for a frame by index."""
         return self.get_bbox(idx)
