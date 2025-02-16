@@ -538,10 +538,12 @@ class VideoMANORegressor(pl.LightningModule):
         loss = losses["loss"]
 
         # Additional metrics - only compute for available hands
-        hand_available_expanded = hand_available.unsqueeze(-1).unsqueeze(-1)
-        valid_joints = (pred_hand_joints - true_hand_joints) * hand_available_expanded
-        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * hand_available_expanded
-        valid_params = (y_pred - y) * hand_available_expanded
+        mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
+        mask_params = hand_available.unsqueeze(-1)
+
+        valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
+        valid_params = (y_pred - y) * mask_params
 
         # Compute mean metrics only over available frames
         available_count = hand_available.sum()
@@ -617,10 +619,12 @@ class VideoMANORegressor(pl.LightningModule):
         loss = losses["loss"]
 
         # Additional metrics - only compute for available hands
-        hand_available_expanded = hand_available.unsqueeze(-1).unsqueeze(-1)
-        valid_joints = (pred_hand_joints - true_hand_joints) * hand_available_expanded
-        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * hand_available_expanded
-        valid_params = (y_pred - y) * hand_available_expanded
+        mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
+        mask_params = hand_available.unsqueeze(-1)
+
+        valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
+        valid_params = (y_pred - y) * mask_params
 
         # Compute mean metrics only over available frames
         available_count = hand_available.sum()

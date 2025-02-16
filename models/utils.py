@@ -203,7 +203,11 @@ def compute_similarity_transform(s1: torch.Tensor, s2: torch.Tensor) -> torch.Te
     return s1_hat.permute(0, 2, 1)
 
 
-def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
+def reconstruction_error(
+    s1: torch.Tensor,
+    s2: torch.Tensor,
+    hand_available: torch.Tensor | None = None,
+) -> torch.Tensor:
     """Computes the mean Euclidean distance of 2 set of points s1, s2 after performing Procrustes alignment.
 
     Credit: Hamer
@@ -211,6 +215,8 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
     Args:
         s1 (torch.Tensor): First set of points of shape (B, T, N, 3).
         s2 (torch.Tensor): Second set of points of shape (B, T, N, 3).
+        hand_available (torch.Tensor | None): Optional tensor of shape (B, T) indicating which frames have valid hands
+            (1.0 for valid, 0.0 for invalid).
 
     Returns:
         (torch.Tensor): Reconstruction error.
@@ -225,10 +231,21 @@ def reconstruction_error(s1: torch.Tensor, s2: torch.Tensor) -> torch.Tensor:
 
     # Reshape back to (B, T, N, 3)
     s1_hat = s1_hat.reshape(batch_size, num_frames, *s1_hat.shape[1:])
-    # First calculate mean per clip independently
-    clip_means = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-1)
-    # Then take mean across all clips
-    return clip_means.mean()
+
+    # Calculate per-frame error
+    frame_errors = torch.sqrt(((s1_hat - s2) ** 2).sum(dim=-1)).mean(dim=-1)  # Shape: (B, T)
+
+    if hand_available is not None:
+        # Apply hand availability mask
+        frame_errors = frame_errors * hand_available
+        # Average only over available frames
+        available_count = hand_available.sum()
+        if available_count > 0:
+            return frame_errors.sum() / available_count
+        return torch.tensor(0.0, device=s1.device)
+
+    # If no mask provided, average over all frames
+    return frame_errors.mean()
 
 
 def mano_to_sixd(x: torch.Tensor) -> torch.Tensor:

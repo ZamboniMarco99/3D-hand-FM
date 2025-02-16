@@ -78,6 +78,9 @@ def temporal_diversity_loss(
     # Convert hand_available to boolean
     hand_available = hand_available.bool()
 
+    # Get shapes
+    B, T, P = mano_params.shape  # noqa: N806
+
     # Compute differences between consecutive frames
     frame_diffs = mano_params[:, 1:] - mano_params[:, :-1]  # Shape: (B, T-1, P)
 
@@ -89,6 +92,9 @@ def temporal_diversity_loss(
 
     # Compute L2 norm of differences along parameter dimension
     frame_diff_norms = torch.norm(frame_diffs, dim=-1)  # Shape: (B, T-1)
+
+    # Ensure valid_pairs has the same shape as frame_diff_norms
+    valid_pairs = valid_pairs.view(B, T - 1)
 
     # Penalize frames that are too similar (diff < epsilon), only for valid pairs
     diversity_loss = F.relu(epsilon - frame_diff_norms) * valid_pairs  # Shape: (B, T-1)
