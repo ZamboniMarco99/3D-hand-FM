@@ -42,13 +42,27 @@ class BboxReader:
         process_noise: float = 1e-4,
         measurement_noise: float = 3e-1,
         min_bbox_diagonal: float = 50,
+        outlier_threshold: float = 2.0,  # Number of standard deviations for outlier detection
     ) -> None:
-        """Initialize the BboxReader."""
+        """Initialize the BboxReader.
+
+        Args:
+            bbox_path: Path to directory containing bbox files or single bbox file
+            fmt_frame_fn: Function to transform frame indexes into filenames
+            single_file: Whether reading from a single file with one bbox per line
+            use_kalman: Whether to use Kalman filtering for bbox tracking
+            process_noise: Process noise parameter for Kalman filter
+            measurement_noise: Measurement noise parameter for Kalman filter
+            min_bbox_diagonal: Minimum diagonal length to filter small outliers
+            outlier_threshold: Number of standard deviations beyond which a bbox is considered an outlier
+
+        """
         self.bbox_path = Path(bbox_path)
         self.fmt_frame_fn = fmt_frame_fn
         self.single_file = single_file
         self.use_kalman = use_kalman
         self.min_bbox_diagonal = min_bbox_diagonal
+        self.outlier_threshold = outlier_threshold
         self.measurement_noise = measurement_noise
         self.filtered_left = None
         self.filtered_right = None
@@ -102,11 +116,19 @@ class BboxReader:
             pass  # Keep zeros for missing or invalid bboxes
 
     def _find_valid_measurements(self, bboxes: np.ndarray) -> tuple[list[int], list[np.ndarray], list[np.ndarray]]:
-        """Find valid measurements in the sequence of bboxes."""
+        """Find valid measurements in the sequence of bboxes.
+
+        A measurement is considered valid if:
+        1. It's not all zeros
+        2. The diagonal length is above min_bbox_diagonal
+        3. The diagonal length is within outlier_threshold standard deviations of the mean
+        """
         valid_frames = []
         valid_centers = []
         valid_sizes = []
+        diagonals = []
 
+        # First pass: collect all non-zero bboxes above minimum size
         for i in range(self.bbox_len):
             bbox = bboxes[i]
             if not np.all(bbox == 0):
@@ -115,13 +137,182 @@ class BboxReader:
                 diagonal = np.sqrt(width**2 + height**2)
 
                 if diagonal >= self.min_bbox_diagonal:
+                    diagonals.append(diagonal)
                     valid_frames.append(i)
                     center = np.array([(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2])
                     size = np.array([width, height])
                     valid_centers.append(center)
                     valid_sizes.append(size)
 
-        return valid_frames, valid_centers, valid_sizes
+        if not diagonals:  # No valid measurements found
+            return [], [], []
+
+        # Calculate statistics for outlier detection
+        diagonals = np.array(diagonals)
+        mean_diagonal = np.mean(diagonals)
+        std_diagonal = np.std(diagonals)
+
+        # Second pass: filter out statistical outliers
+        filtered_frames = []
+        filtered_centers = []
+        filtered_sizes = []
+
+        for i, diagonal in enumerate(diagonals):
+            z_score = abs(diagonal - mean_diagonal) / std_diagonal
+            if diagonal >= self.min_bbox_diagonal and z_score <= self.outlier_threshold:
+                filtered_frames.append(valid_frames[i])
+                filtered_centers.append(valid_centers[i])
+                filtered_sizes.append(valid_sizes[i])
+
+        return filtered_frames, filtered_centers, filtered_sizes
+
+    def _extrapolate_sequence(
+        self,
+        start_center: np.ndarray,
+        end_center: np.ndarray,
+        start_size: np.ndarray,
+        end_size: np.ndarray,
+        start_frame: int,
+        frames_diff: int,
+        num_frames: int,
+        reverse: bool = False,
+    ) -> list[np.ndarray]:
+        """Extrapolate bounding boxes for a sequence of frames.
+
+        Args:
+            start_center: Starting center point for extrapolation
+            end_center: End center point for extrapolation
+            start_size: Starting size for extrapolation
+            end_size: End size for extrapolation
+            start_frame: Frame index to start extrapolation from
+            frames_diff: Number of frames between measurements used for velocity
+            num_frames: Number of frames to extrapolate
+            reverse: Whether to extrapolate backwards
+
+        """
+        boxes = []
+        for i in range(num_frames):
+            frame_idx = start_frame - i - 1 if reverse else start_frame + i + 1
+            t = (frame_idx - start_frame) / frames_diff
+            center = (
+                start_center + t * (start_center - end_center)
+                if reverse
+                else start_center + t * (end_center - start_center)
+            )
+            size = start_size + t * (start_size - end_size) if reverse else start_size + t * (end_size - start_size)
+            boxes.append(self._center_to_corners(center, size))
+        return boxes
+
+    def _interpolate_between_measurements(
+        self,
+        start_center: np.ndarray,
+        end_center: np.ndarray,
+        start_size: np.ndarray,
+        end_size: np.ndarray,
+        start_frame: int,
+        end_frame: int,
+    ) -> list[np.ndarray]:
+        """Interpolate bounding boxes between two measurements.
+
+        Args:
+            start_center: Center point of starting measurement
+            end_center: Center point of ending measurement
+            start_size: Size of starting measurement
+            end_size: Size of ending measurement
+            start_frame: Starting frame index
+            end_frame: Ending frame index
+
+        """
+        boxes = []
+        for j in range(start_frame + 1, end_frame):
+            t = (j - start_frame) / (end_frame - start_frame)
+            center = start_center * (1 - t) + end_center * t
+            size = start_size * (1 - t) + end_size * t
+            boxes.append(self._center_to_corners(center, size))
+        return boxes
+
+    def _handle_sequence_start(
+        self,
+        valid_frames: list[int],
+        valid_centers: list[np.ndarray],
+        valid_sizes: list[np.ndarray],
+        interpolated: np.ndarray,
+        is_interpolated: np.ndarray,
+        extrapolation_frames: int,
+    ) -> None:
+        """Handle the start of the sequence, before the first valid measurement."""
+        first_valid_idx = valid_frames[0]
+        if first_valid_idx == 0:
+            return
+
+        if len(valid_frames) > 1:
+            # Extrapolate backwards from first two measurements
+            num_frames = min(extrapolation_frames, first_valid_idx)
+            extrapolated = self._extrapolate_sequence(
+                valid_centers[0],
+                valid_centers[1],
+                valid_sizes[0],
+                valid_sizes[1],
+                valid_frames[0],
+                valid_frames[1] - valid_frames[0],
+                num_frames,
+                reverse=True,
+            )
+
+            # Fill extrapolated and remaining frames
+            for i, bbox in enumerate(extrapolated):
+                frame_idx = first_valid_idx - i - 1
+                interpolated[frame_idx] = bbox
+                is_interpolated[frame_idx] = True
+
+            if first_valid_idx > num_frames:
+                interpolated[: first_valid_idx - num_frames] = extrapolated[-1]
+                is_interpolated[: first_valid_idx - num_frames] = True
+        else:
+            # Only one measurement available
+            interpolated[:first_valid_idx] = self._center_to_corners(valid_centers[0], valid_sizes[0])
+            is_interpolated[:first_valid_idx] = True
+
+    def _handle_sequence_end(
+        self,
+        valid_frames: list[int],
+        valid_centers: list[np.ndarray],
+        valid_sizes: list[np.ndarray],
+        interpolated: np.ndarray,
+        is_interpolated: np.ndarray,
+        extrapolation_frames: int,
+    ) -> None:
+        """Handle the end of the sequence, after the last valid measurement."""
+        last_valid_idx = valid_frames[-1]
+        if last_valid_idx >= self.bbox_len - 1:
+            return
+
+        if len(valid_frames) > 1:
+            # Extrapolate forward from last two measurements
+            num_frames = min(extrapolation_frames, self.bbox_len - last_valid_idx - 1)
+            extrapolated = self._extrapolate_sequence(
+                valid_centers[-1],
+                valid_centers[-2],
+                valid_sizes[-1],
+                valid_sizes[-2],
+                valid_frames[-1],
+                valid_frames[-1] - valid_frames[-2],
+                num_frames,
+            )
+
+            # Fill extrapolated and remaining frames
+            for i, bbox in enumerate(extrapolated):
+                frame_idx = last_valid_idx + i + 1
+                interpolated[frame_idx] = bbox
+                is_interpolated[frame_idx] = True
+
+            if last_valid_idx + num_frames + 1 < self.bbox_len:
+                interpolated[last_valid_idx + num_frames + 1 :] = extrapolated[-1]
+                is_interpolated[last_valid_idx + num_frames + 1 :] = True
+        else:
+            # Only one measurement available
+            interpolated[last_valid_idx + 1 :] = self._center_to_corners(valid_centers[-1], valid_sizes[-1])
+            is_interpolated[last_valid_idx + 1 :] = True
 
     def _interpolate_sequence(
         self,
@@ -129,41 +320,73 @@ class BboxReader:
         valid_centers: list[np.ndarray],
         valid_sizes: list[np.ndarray],
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Interpolate missing frames between valid measurements."""
+        """Interpolate missing frames between valid measurements.
+
+        This method handles two types of frame sequences:
+        1. Frames between valid measurements: Standard linear interpolation
+        2. Frames at sequence boundaries (start/end):
+           - If multiple measurements available: Linear extrapolation for up to 10 frames
+           - Beyond 10 frames: Clips to the last extrapolated frame
+           - If only one measurement: Uses that measurement for all frames
+        """
         interpolated = np.zeros((self.bbox_len, 4), dtype=np.float32)
         is_interpolated = np.zeros(self.bbox_len, dtype=bool)
 
         if not valid_frames:
             return interpolated, is_interpolated
 
-        # Process pairs of valid measurements
+        # Maximum number of frames to extrapolate at sequence boundaries (start/end).
+        # Beyond this limit, bboxes are clipped to the last extrapolated frame.
+        extrapolation_frames = 10
+
+        # Handle sequence boundaries
+        self._handle_sequence_start(
+            valid_frames,
+            valid_centers,
+            valid_sizes,
+            interpolated,
+            is_interpolated,
+            extrapolation_frames,
+        )
+        self._handle_sequence_end(
+            valid_frames,
+            valid_centers,
+            valid_sizes,
+            interpolated,
+            is_interpolated,
+            extrapolation_frames,
+        )
+
+        # Interpolate between measurements
         for i in range(len(valid_frames) - 1):
             start_idx, end_idx = valid_frames[i], valid_frames[i + 1]
-            start_center, end_center = valid_centers[i], valid_centers[i + 1]
-            start_size, end_size = valid_sizes[i], valid_sizes[i + 1]
+            interpolated[start_idx] = self._center_to_corners(valid_centers[i], valid_sizes[i])
 
-            # Set start frame
-            interpolated[start_idx] = self._center_to_corners(start_center, start_size)
+            interpolated_boxes = self._interpolate_between_measurements(
+                valid_centers[i],
+                valid_centers[i + 1],
+                valid_sizes[i],
+                valid_sizes[i + 1],
+                start_idx,
+                end_idx,
+            )
 
-            # Interpolate intermediate frames
-            for j in range(start_idx + 1, end_idx):
-                t = (j - start_idx) / (end_idx - start_idx)
-                center = start_center * (1 - t) + end_center * t
-                size = start_size * (1 - t) + end_size * t
-                interpolated[j] = self._center_to_corners(center, size)
+            for j, bbox in enumerate(interpolated_boxes, start=start_idx + 1):
+                interpolated[j] = bbox
                 is_interpolated[j] = True
 
-        # Set last valid frame
-        if valid_frames:
-            last_idx = valid_frames[-1]
-            interpolated[last_idx] = self._center_to_corners(valid_centers[-1], valid_sizes[-1])
+        # Set last valid measurement
+        interpolated[valid_frames[-1]] = self._center_to_corners(valid_centers[-1], valid_sizes[-1])
 
         return interpolated, is_interpolated
 
     @staticmethod
     def _center_to_corners(center: np.ndarray, size: np.ndarray) -> np.ndarray:
-        """Convert center and size to corner format."""
-        half_width, half_height = size[0] / 2, size[1] / 2
+        """Convert center and size to corner format, ensuring positive dimensions."""
+        # Ensure positive dimensions
+        width = max(1.0, abs(size[0]))
+        height = max(1.0, abs(size[1]))
+        half_width, half_height = width / 2, height / 2
         return np.array(
             [
                 center[0] - half_width,  # x1
@@ -172,6 +395,15 @@ class BboxReader:
                 center[1] + half_height,  # y2
             ],
         )
+
+    def _enforce_positive_dimensions(self, state: np.ndarray) -> np.ndarray:
+        """Enforce positive dimensions in Kalman filter state."""
+        # state has shape (8, 1) with [x, y, w, h, dx, dy, dw, dh]
+        state = state.copy()
+        # Ensure positive width and height
+        state[2, 0] = max(1.0, abs(state[2, 0]))  # width
+        state[3, 0] = max(1.0, abs(state[3, 0]))  # height
+        return state
 
     def _apply_kalman_filter(
         self,
@@ -192,7 +424,7 @@ class BboxReader:
 
             # Convert to center format
             cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
-            w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            w, h = max(1.0, bbox[2] - bbox[0]), max(1.0, bbox[3] - bbox[1])
             measurement = np.array([cx, cy, w, h])
 
             if last_measurement is None:
@@ -206,7 +438,11 @@ class BboxReader:
                 kf.R[2:4, 2:4] *= 2.0  # Even higher noise for size measurements
 
                 kf.predict()
+                # Enforce positive dimensions after prediction
+                kf.x = self._enforce_positive_dimensions(kf.x)
                 kf.update(measurement)
+                # Enforce positive dimensions after update
+                kf.x = self._enforce_positive_dimensions(kf.x)
                 filtered[i] = self._center_to_corners(kf.x[:2, 0], kf.x[2:4, 0])
 
             last_measurement = measurement
