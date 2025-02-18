@@ -1,0 +1,19 @@
+# Hydra config for evaluating mano regressor
+
+defaults:
+  - train_mano_regressor
+  - _self_
+
+# Override training flag
+train: False
+
+# Path to the checkpoint to evaluate
+checkpoint_path: ???  # This needs to be specified when running the script
+
+# Override trainer config for evaluation
+trainer:
+  accelerator: "auto"
+  devices: 1  # Use single device for evaluation
+
+# Disable data augmentation
+transforms: null 
