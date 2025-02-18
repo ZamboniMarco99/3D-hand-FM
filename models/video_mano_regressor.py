@@ -548,10 +548,10 @@ class VideoMANORegressor(pl.LightningModule):
         # Compute mean metrics only over available frames
         available_count = hand_available.sum()
         if available_count > 0:
-            mje = torch.linalg.vector_norm(valid_joints, dim=-1).sum() / available_count
-            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).sum() / available_count
-            mse = (valid_params**2).sum() / available_count
-            mae = torch.abs(valid_params).sum() / available_count
+            mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
+            mse = (valid_params**2).mean(dim=-1).sum() / available_count
+            mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
             mje = torch.tensor(0.0, device=x.device)
@@ -629,10 +629,10 @@ class VideoMANORegressor(pl.LightningModule):
         # Compute mean metrics only over available frames
         available_count = hand_available.sum()
         if available_count > 0:
-            mje = torch.linalg.vector_norm(valid_joints, dim=-1).sum() / available_count
-            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).sum() / available_count
-            mse = (valid_params**2).sum() / available_count
-            mae = torch.abs(valid_params).sum() / available_count
+            mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
+            mse = (valid_params**2).mean(dim=-1).sum() / available_count
+            mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
             mje = torch.tensor(0.0, device=x.device)
