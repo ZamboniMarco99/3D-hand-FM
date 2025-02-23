@@ -94,6 +94,7 @@ def main(cfg: DictConfig) -> None:
         devices=cfg.trainer.devices,
         logger=wandb_logger,
         log_every_n_steps=16,
+        gradient_clip_val=1.0,
         callbacks=[checkpoint_callback],
     )
     logger.info("Trainer initialized")
