@@ -1,18 +1,15 @@
-"""Dataset class for H2O dataset.
+"""Dataset class for Arctic dataset.
 
-This module provides the H2ODataset class, which is designed to handle
-multiple video sequences and corresponding MANO hand pose parameters from the H2O dataset
+This module provides the ArcticDataset class, which is designed to handle
+multiple video sequences and corresponding MANO hand pose parameters from the Arctic dataset
 for machine learning tasks. It utilizes the VideoReader class to efficiently load and
 process video frames, and the ManoReader class to load MANO parameters, across different
 scenes and camera views.
 
-The H2O dataset consists of videos ranging from 257 to 1239 frames in length.
-
 Example usage:
-    dataset = H2ODataset(
+    dataset = ArcticDataset(
         dataset_prefix='/path/to/dataset',
         scenes=['scene1', 'scene2'],
-        cameras=['cam1', 'cam2'],
         num_frames=100,
         fps=7.5
     )
@@ -35,10 +32,10 @@ from data.video_reader import VideoReader
 from models.utils import project_joints_to_2d
 
 
-class H2ODataset(torch.utils.data.Dataset):
-    """A dataset class for handling H2O video data and MANO parameters.
+class ArcticDataset(torch.utils.data.Dataset):
+    """A dataset class for handling Arctic video data and MANO parameters.
 
-    This class is designed to work with the H2O dataset, which consists of multiple
+    This class is designed to work with the Arctic dataset, which consists of multiple
     video sequences and corresponding MANO hand pose parameters across different
     scenes and camera views. It utilizes the VideoReader class to efficiently load
     and process video frames, and the ManoReader class to load MANO parameters.
@@ -55,7 +52,6 @@ class H2ODataset(torch.utils.data.Dataset):
     Args:
         dataset_prefix (str): The root directory path of the dataset.
         scenes (list[str]): List of scene names to include in the dataset.
-        cameras (list[str]): List of camera names to include in the dataset.
         num_frames (int | None, optional): Number of frames to include per video clip. Defaults to None.
 
     """
@@ -64,7 +60,6 @@ class H2ODataset(torch.utils.data.Dataset):
         self,
         dataset_prefix: str,
         scenes: list[str],
-        cameras: list[str],
         num_frames: int | None = None,
         fps: float = 7.5,
         cache: bool = True,
@@ -72,12 +67,11 @@ class H2ODataset(torch.utils.data.Dataset):
         crop_size: int = 224,
         padding_factor: float = 1.2,
     ) -> None:
-        """Initialize the H2ODataset.
+        """Initialize the ArcticDataset.
 
         Args:
             dataset_prefix (str): The root directory path of the dataset.
             scenes (list[str]): List of scene names to include in the dataset.
-            cameras (list[str]): List of camera names to include in the dataset.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
             fps (float, optional): Desired frames per second. Defaults to 7.5.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
@@ -96,85 +90,85 @@ class H2ODataset(torch.utils.data.Dataset):
         self.num_clips = 0
         self.num_frames = num_frames
         self.fps = fps
-        self.base_framerate = 30
+        self.base_framerate = 30  # Arctic dataset is recorded at 30 fps
         self.cache = cache
         self.transforms = transforms
-        # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
         self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
         self.mirror_transform = VideoMirror(p=1)
 
-        scene_path_pattern = "{dataset_prefix}/{scene}"
+        images_dir_path = "cropped_images"
+        data_path = "raw_seqs"
+        hand_bboxes_path = "hand_bbox"
+        joints_path = "joints"
+
         for scene in scenes:
-            scene_path = scene_path_pattern.format(dataset_prefix=dataset_prefix, scene=scene)
-            for directory in os.listdir(scene_path):
-                for camera in cameras:
-                    frame_dir_path = Path(scene_path) / directory / camera / "rgb"
-                    self.video_readers.append(
-                        VideoReader(
-                            video_path=None,
-                            frame_dir_path=frame_dir_path,
-                            fmt_frame_fn=lambda x: f"{x:06d}.png",
-                        ),
-                    )
+            for video in os.listdir(Path(dataset_prefix) / images_dir_path / scene):
+                frame_dir_path = Path(dataset_prefix) / images_dir_path / scene / video
+                self.video_readers.append(
+                    VideoReader(
+                        video_path=None,
+                        frame_dir_path=frame_dir_path,
+                        fmt_frame_fn=lambda x: f"{x:05d}.jpg",
+                    ),
+                )
 
-                    intrinsics_path = Path(scene_path) / directory / camera / "cam_intrinsics.txt"
-                    [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
-                    intrinsics = np.array(
-                        [
-                            [fx, 0, cx],
-                            [0, fy, cy],
-                            [0, 0, 1],
-                        ],
-                        dtype=np.float32,
-                    )
-                    self.camera_intrinsics.append(intrinsics)
+                # TODO: Get actual intrinsics from the dataset
+                intrinsics = np.array(
+                    [
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 0.0],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                )
+                self.camera_intrinsics.append(intrinsics)
 
-                    mano_dir_path = Path(scene_path) / directory / camera / "hand_pose_mano"
-                    self.mano_readers.append(
-                        ManoReader(
-                            mano_dir_path=mano_dir_path,
-                            assumed_fps=30,
-                            fmt_frame_fn=lambda x: f"{x:06d}.txt",
-                        ),
-                    )
+                mano_dir_path = Path(dataset_prefix) / data_path / f"{scene}.mano.npy"
+                self.mano_readers.append(
+                    ManoReader(
+                        mano_dir_path=mano_dir_path,
+                        assumed_fps=30,
+                        data_format="arctic",
+                    ),
+                )
 
-                    bbox_dir_path = Path(scene_path) / directory / camera / "predicted_bboxes.txt"
-                    self.bbox_readers.append(
-                        BboxReader(
-                            bbox_path=bbox_dir_path,
-                            single_file=True,
-                            use_kalman=True,
-                            measurement_noise=0.1,
-                            min_bbox_diagonal=10,
-                        ),
-                    )
+                bbox_dir_path = Path(dataset_prefix) / hand_bboxes_path / scene / video
+                self.bbox_readers.append(
+                    BboxReader(
+                        bbox_path=bbox_dir_path,
+                        single_file=True,
+                        use_kalman=True,
+                        measurement_noise=0.1,
+                        min_bbox_diagonal=10,
+                    ),
+                )
 
-                    joints_dir_path = Path(scene_path) / directory / camera / "joints"
-                    self.joints_readers.append(
-                        JointsReader(
-                            joints_dir_path=joints_dir_path,
-                            fmt_frame_fn=lambda x: f"{x:06d}.json",
-                        ),
-                    )
+                joints_dir_path = Path(dataset_prefix) / joints_path / scene / video
+                self.joints_readers.append(
+                    JointsReader(
+                        joints_dir_path=joints_dir_path,
+                        fmt_frame_fn=lambda x: f"{x:05d}.json",
+                    ),
+                )
 
-                    self.clip_to_data[self.num_clips] = (
-                        self.video_readers[-1],
-                        self.mano_readers[-1],
-                        self.bbox_readers[-1],
-                        self.joints_readers[-1],
-                        self.camera_intrinsics[-1],
-                    )
+                self.clip_to_data[self.num_clips] = (
+                    self.video_readers[-1],
+                    self.mano_readers[-1],
+                    self.bbox_readers[-1],
+                    self.joints_readers[-1],
+                    self.camera_intrinsics[-1],
+                )
 
-                    # Calculate the number of clips based on the desired fps
-                    step = int(self.base_framerate // self.fps)
-                    full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
-                    partials = max(
-                        (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
-                        0,
-                    )
-                    total_len = full_starts * step + partials
-                    self.num_clips += total_len
+                # Calculate the number of clips based on the desired fps
+                step = int(self.base_framerate // self.fps)
+                full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
+                partials = max(
+                    (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
+                    0,
+                )
+                total_len = full_starts * step + partials
+                self.num_clips += total_len
 
     def __len__(self) -> int:
         """Get the total number of clips in the dataset.
@@ -183,7 +177,7 @@ class H2ODataset(torch.utils.data.Dataset):
             int: The number of clips in the dataset.
 
         """
-        return 2 * self.num_clips
+        return 2 * self.num_clips  # Double for left and right hands
 
     def _get_clip_data(
         self,
@@ -249,7 +243,7 @@ class H2ODataset(torch.utils.data.Dataset):
         start_frame: int,
         num_frames: int,
         step: int,
-    ) -> tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]:
+    ) -> tuple[list[np.ndarray], list[np.ndarray]]:
         """Get MANO parameters from the MANO reader for a given clip.
 
         Args:
@@ -259,10 +253,9 @@ class H2ODataset(torch.utils.data.Dataset):
             step (int): The step size between frames.
 
         Returns:
-            tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]: A tuple containing:
+            tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
                 - The first list contains MANO parameters for the left hand for each frame.
                 - The second list contains MANO parameters for the right hand for each frame.
-                - The third list contains dictionaries indicating availability of each hand for each frame.
 
         """
         return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
@@ -315,7 +308,7 @@ class H2ODataset(torch.utils.data.Dataset):
         """
         return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
 
         This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
@@ -328,7 +321,7 @@ class H2ODataset(torch.utils.data.Dataset):
                       values [num_clips, 2*num_clips-1] process right hand.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
                 - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
                   C is the number of channels (3), and H=W=output_size. Values are normalized with
                   mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
@@ -338,8 +331,6 @@ class H2ODataset(torch.utils.data.Dataset):
                   and J is the number of joints.
                 - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
                   and J is the number of joints.
-                - A tensor of hand availability flags with shape (T,), where T is the number of frames.
-                  1 indicates the hand is available, 0 indicates it is not.
 
         Raises:
             IndexError: If the provided index is out of range [0, 2*num_clips-1].
@@ -358,17 +349,12 @@ class H2ODataset(torch.utils.data.Dataset):
         step = int(self.base_framerate // self.fps)
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
-            mano_params_left, mano_params_right, hand_availables = self._get_mano_params(
-                mano_reader,
-                start_frame,
-                self.num_frames,
-                step,
-            )
+            mano_params_left, mano_params_right = self._get_mano_params(mano_reader, start_frame, self.num_frames, step)
             bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
             joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
         else:
             frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
-            mano_params_left, mano_params_right, hand_availables = self._get_mano_params.__wrapped__(
+            mano_params_left, mano_params_right = self._get_mano_params.__wrapped__(
                 mano_reader,
                 start_frame,
                 self.num_frames,
@@ -401,12 +387,10 @@ class H2ODataset(torch.utils.data.Dataset):
             mano_current = mano_right
             bbox_current = bbox_right
             joints_current = joints_right
-            hand_available = torch.tensor([h["right"] for h in hand_availables], dtype=torch.float32)
         else:
             mano_current = mano_left
             bbox_current = bbox_left
             joints_current = joints_left
-            hand_available = torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32)
 
         mano_trans = mano_current[..., :3].unsqueeze(1).clone()
         # Scale to milimeters
@@ -441,4 +425,4 @@ class H2ODataset(torch.utils.data.Dataset):
         # Normalize the cropped clip
         clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
 
-        return clip_current, mano_current, joints_current, joints_2d_current, hand_available
+        return clip_current, mano_current, joints_current, joints_2d_current

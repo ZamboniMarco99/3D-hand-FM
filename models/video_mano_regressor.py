@@ -385,6 +385,7 @@ class VideoMANORegressor(pl.LightningModule):
         true_hand_joints: torch.Tensor,
         pred_keypoints_2d: torch.Tensor,
         true_keypoints_2d: torch.Tensor,
+        hand_available: torch.Tensor,
     ) -> torch.Tensor:
         """Calculate the loss for the model.
 
@@ -406,46 +407,69 @@ class VideoMANORegressor(pl.LightningModule):
             true_hand_joints (torch.Tensor): Ground truth 3D keypoints.
             pred_keypoints_2d (torch.Tensor): Predicted 2D keypoints.
             true_keypoints_2d (torch.Tensor): Ground truth 2D keypoints.
+            hand_available (torch.Tensor): Tensor of floats indicating hand availability for each frame
+                (1.0 for valid, 0.0 for invalid).
 
         Returns:
             torch.Tensor: The computed loss.
 
         """
+        # Expand hand_available to match parameter dimensions
+        hand_available = hand_available.unsqueeze(-1)
+
         end_global_orientation = 9 if self.sixd else 6
         global_orientation_loss = (
-            F.mse_loss(
-                y_pred[..., 3:end_global_orientation],
-                y_true[..., 3:end_global_orientation],
-                reduction="none",
+            (
+                F.mse_loss(
+                    y_pred[..., 3:end_global_orientation],
+                    y_true[..., 3:end_global_orientation],
+                    reduction="none",
+                )
+                * hand_available
             )
             .sum(dim=-1)
             .mean()
         )
         pose_loss = (
-            F.mse_loss(
-                y_pred[..., end_global_orientation:-10],
-                y_true[..., end_global_orientation:-10],
-                reduction="none",
+            (
+                F.mse_loss(
+                    y_pred[..., end_global_orientation:-10],
+                    y_true[..., end_global_orientation:-10],
+                    reduction="none",
+                )
+                * hand_available
             )
             .sum(dim=-1)
             .mean()
         )
         shape_loss = (
-            F.mse_loss(
-                y_pred[..., -10:],
-                y_true[..., -10:],
-                reduction="none",
+            (
+                F.mse_loss(
+                    y_pred[..., -10:],
+                    y_true[..., -10:],
+                    reduction="none",
+                )
+                * hand_available
             )
             .sum(dim=-1)
             .mean()
         )
-        keypoints_loss = F.l1_loss(pred_hand_joints, true_hand_joints, reduction="none").sum(dim=(-1, -2)).mean()
-        keypoints_2d_loss = F.l1_loss(pred_keypoints_2d, true_keypoints_2d, reduction="none").sum(dim=(-1, -2)).mean()
 
-        # Add new diversity losses
-        kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d)
+        # Expand hand_available for keypoints dimensions
+        keypoints_mask = hand_available.unsqueeze(-1)
+        keypoints_loss = (
+            (F.l1_loss(pred_hand_joints, true_hand_joints, reduction="none") * keypoints_mask).sum(dim=(-1, -2)).mean()
+        )
+        keypoints_2d_loss = (
+            (F.l1_loss(pred_keypoints_2d, true_keypoints_2d, reduction="none") * keypoints_mask)
+            .sum(dim=(-1, -2))
+            .mean()
+        )
 
-        temp_diversity_loss = 0 if self.last_frame_only else temporal_diversity_loss(y_pred)
+        # Only compute diversity losses for available hands
+        kp_diversity_loss = keypoint_diversity_loss(pred_keypoints_2d, hand_available)
+
+        temp_diversity_loss = 0 if self.last_frame_only else temporal_diversity_loss(y_pred, hand_available)
 
         if self.hparams.loss_weights is None:
             losses = {
@@ -473,24 +497,25 @@ class VideoMANORegressor(pl.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> torch.Tensor:
         """Training step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
+                - Hand availability flags (B, T)
             batch_idx (int): Index of the batch.
 
         Returns:
             torch.Tensor: Loss value.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d = batch
+        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
 
         if self.sixd:
             # convert to 6D pose
@@ -508,15 +533,32 @@ class VideoMANORegressor(pl.LightningModule):
             true_hand_joints,
             pred_keypoints_2d,
             true_keypoints_2d,
+            hand_available,
         )
         loss = losses["loss"]
 
-        # Additional metrics
-        mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
-        mje_2d = torch.linalg.vector_norm(pred_keypoints_2d - true_keypoints_2d, dim=-1).mean(dim=-1).mean()
-        mse = F.mse_loss(y_pred, y)
-        mae = F.l1_loss(y_pred, y)
-        pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
+        # Additional metrics - only compute for available hands
+        mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
+        mask_params = hand_available.unsqueeze(-1)
+
+        valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
+        valid_params = (y_pred - y) * mask_params
+
+        # Compute mean metrics only over available frames
+        available_count = hand_available.sum()
+        if available_count > 0:
+            mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
+            mse = (valid_params**2).mean(dim=-1).sum() / available_count
+            mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
+            pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
+        else:
+            mje = torch.tensor(0.0, device=x.device)
+            mje_2d = torch.tensor(0.0, device=x.device)
+            mse = torch.tensor(0.0, device=x.device)
+            mae = torch.tensor(0.0, device=x.device)
+            pamje = torch.tensor(0.0, device=x.device)
 
         on_step = self.last_frame_only
         self.log("train/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -525,6 +567,13 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("train/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log(
+            "train/available_ratio",
+            available_count / hand_available.numel(),
+            on_step=on_step,
+            on_epoch=True,
+            sync_dist=True,
+        )
         for key, value in losses.items():
             self.log(f"train/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
@@ -532,21 +581,22 @@ class VideoMANORegressor(pl.LightningModule):
 
     def validation_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> None:
         """Validation step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
+                - Hand availability flags (B, T)
             batch_idx (int): Index of the batch.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d = batch
+        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
 
         if self.sixd:
             # convert to 6D pose
@@ -564,14 +614,32 @@ class VideoMANORegressor(pl.LightningModule):
             true_hand_joints,
             pred_keypoints_2d,
             true_keypoints_2d,
+            hand_available,
         )
         loss = losses["loss"]
-        # Additional metrics
-        mje = torch.linalg.vector_norm(pred_hand_joints - true_hand_joints, dim=-1).mean(dim=-1).mean()
-        mje_2d = torch.linalg.vector_norm(pred_keypoints_2d - true_keypoints_2d, dim=-1).mean(dim=-1).mean()
-        mse = F.mse_loss(y_pred, y)
-        mae = F.l1_loss(y_pred, y)
-        pamje = reconstruction_error(pred_hand_joints, true_hand_joints)
+
+        # Additional metrics - only compute for available hands
+        mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
+        mask_params = hand_available.unsqueeze(-1)
+
+        valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
+        valid_params = (y_pred - y) * mask_params
+
+        # Compute mean metrics only over available frames
+        available_count = hand_available.sum()
+        if available_count > 0:
+            mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
+            mse = (valid_params**2).mean(dim=-1).sum() / available_count
+            mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
+            pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
+        else:
+            mje = torch.tensor(0.0, device=x.device)
+            mje_2d = torch.tensor(0.0, device=x.device)
+            mse = torch.tensor(0.0, device=x.device)
+            mae = torch.tensor(0.0, device=x.device)
+            pamje = torch.tensor(0.0, device=x.device)
 
         on_step = self.last_frame_only
         self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -580,6 +648,13 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("val/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log(
+            "val/available_ratio",
+            available_count / hand_available.numel(),
+            on_step=on_step,
+            on_epoch=True,
+            sync_dist=True,
+        )
         for key, value in losses.items():
             self.log(f"val/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
