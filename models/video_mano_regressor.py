@@ -263,11 +263,18 @@ class VideoMANORegressor(pl.LightningModule):
 
         # MViT encoder
         if pretrained:
-            self.backbone = _mvit_v2_s_pretrained(
+            self.backbone_crops = _mvit_v2_s_pretrained(
+                weights=MViT_V2_S_Weights.DEFAULT,
+            )
+            self.backbone_original = _mvit_v2_s_pretrained(
                 weights=MViT_V2_S_Weights.DEFAULT,
             )
         else:
-            self.backbone = mvit_v2_s(
+            self.backbone_crops = mvit_v2_s(
+                spatial_size=(height, width),
+                temporal_size=num_frames,
+            )
+            self.backbone_original = mvit_v2_s(
                 spatial_size=(height, width),
                 temporal_size=num_frames,
             )
@@ -275,7 +282,8 @@ class VideoMANORegressor(pl.LightningModule):
         backbone_out_features = get_mvit_v2_s_block_setting()[-1].output_channels
 
         # Remove the classification head
-        self.backbone.head = nn.Identity()
+        self.backbone_crops.head = nn.Identity()
+        self.backbone_original.head = nn.Identity()
 
         self.num_trans_params = 3
         self.num_shape_params = 10
@@ -288,24 +296,24 @@ class VideoMANORegressor(pl.LightningModule):
         if last_frame_only:
             # Single frame output
             self.regressor_trans = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_trans_params),
+                nn.Linear(2 * backbone_out_features, self.num_trans_params),
             )
             self.regressor_pose = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_pose_params),
+                nn.Linear(2 * backbone_out_features, self.num_pose_params),
             )
             self.regressor_shape = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_shape_params),
+                nn.Linear(2 * backbone_out_features, self.num_shape_params),
             )
         else:
             # Multi-frame output
             self.regressor_trans = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_trans_params * num_frames),
             )
             self.regressor_pose = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_pose_params * num_frames),
             )
             self.regressor_shape = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_shape_params * num_frames),
             )
 
         self.mano_model = ManoLayer(
@@ -323,11 +331,19 @@ class VideoMANORegressor(pl.LightningModule):
         self.register_buffer("init_shape", torch.tensor(mean_mano_params["shape"], dtype=torch.float32))
         self.register_buffer("init_trans", torch.tensor(mean_mano_params["cam"], dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x_cropped: torch.Tensor,
+        x_original: torch.Tensor,
+        intrinsics: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the VideoMANORegressor model.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
+            x_cropped (torch.Tensor): Cropped input tensor of shape (batch_size, channels, time, height, width).
+            x_original (torch.Tensor): Original input tensor of shape (batch_size, channels, time, height, width).
+            intrinsics (torch.Tensor | None, optional): Camera intrinsics matrix of shape (batch_size, 3, 3).
+                If None, uses the default intrinsic matrix. Defaults to None.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing:
@@ -336,10 +352,12 @@ class VideoMANORegressor(pl.LightningModule):
                 - Predicted 2D hand joints
 
         """
-        features = self.backbone(x)
-        trans_params = self.regressor_trans(features).reshape(x.shape[0], -1, self.num_trans_params)
-        pose_params = self.regressor_pose(features).reshape(x.shape[0], -1, self.num_pose_params)
-        shape_params = self.regressor_shape(features).reshape(x.shape[0], -1, self.num_shape_params)
+        features_crops = self.backbone_crops(x_cropped)
+        features_original = self.backbone_original(x_original)
+        features = torch.cat((features_crops, features_original), dim=1)
+        trans_params = self.regressor_trans(features).reshape(x_cropped.shape[0], -1, self.num_trans_params)
+        pose_params = self.regressor_pose(features).reshape(x_cropped.shape[0], -1, self.num_pose_params)
+        shape_params = self.regressor_shape(features).reshape(x_cropped.shape[0], -1, self.num_shape_params)
 
         # Reshape the outputs
         hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
@@ -372,7 +390,7 @@ class VideoMANORegressor(pl.LightningModule):
         mano_trans = mano_trans * 1000
         hand_joints_2d = project_joints_to_2d(
             hand_joints + mano_trans,
-            self.intrinsic_matrix,
+            intrinsics,
         )
 
         return final_hand_params, hand_joints, hand_joints_2d
@@ -497,34 +515,38 @@ class VideoMANORegressor(pl.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> torch.Tensor:
         """Training step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch:
+                A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
                 - Hand availability flags (B, T)
+                - Original non-cropped video frames (B, T, C, H, W)
+                - Camera intrinsics for original view (B, 3, 3)
             batch_idx (int): Index of the batch.
 
         Returns:
             torch.Tensor: Loss value.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
+        x_cropped, y, true_hand_joints, true_keypoints_2d, hand_available, x_original, intrinsics = batch
 
         if self.sixd:
             # convert to 6D pose
             y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
-        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_cropped = x_cropped.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_original = x_original.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x_cropped, x_original, intrinsics)
 
         losses = self.loss_function(
             y_pred,
@@ -554,11 +576,11 @@ class VideoMANORegressor(pl.LightningModule):
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
-            mje = torch.tensor(0.0, device=x.device)
-            mje_2d = torch.tensor(0.0, device=x.device)
-            mse = torch.tensor(0.0, device=x.device)
-            mae = torch.tensor(0.0, device=x.device)
-            pamje = torch.tensor(0.0, device=x.device)
+            mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_2d = torch.tensor(0.0, device=x_cropped.device)
+            mse = torch.tensor(0.0, device=x_cropped.device)
+            mae = torch.tensor(0.0, device=x_cropped.device)
+            pamje = torch.tensor(0.0, device=x_cropped.device)
 
         on_step = self.last_frame_only
         self.log("train/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -581,31 +603,35 @@ class VideoMANORegressor(pl.LightningModule):
 
     def validation_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> None:
         """Validation step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch:
+                A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
                 - Hand availability flags (B, T)
+                - Original non-cropped video frames (B, T, C, H, W)
+                - Camera intrinsics for original view (B, 3, 3)
             batch_idx (int): Index of the batch.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
+        x_cropped, y, true_hand_joints, true_keypoints_2d, hand_available, x_original, intrinsics = batch
 
         if self.sixd:
             # convert to 6D pose
             y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
-        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_cropped = x_cropped.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_original = x_original.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x_cropped, x_original, intrinsics)
 
         losses = self.loss_function(
             y_pred,
@@ -635,11 +661,11 @@ class VideoMANORegressor(pl.LightningModule):
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
-            mje = torch.tensor(0.0, device=x.device)
-            mje_2d = torch.tensor(0.0, device=x.device)
-            mse = torch.tensor(0.0, device=x.device)
-            mae = torch.tensor(0.0, device=x.device)
-            pamje = torch.tensor(0.0, device=x.device)
+            mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_2d = torch.tensor(0.0, device=x_cropped.device)
+            mse = torch.tensor(0.0, device=x_cropped.device)
+            mae = torch.tensor(0.0, device=x_cropped.device)
+            pamje = torch.tensor(0.0, device=x_cropped.device)
 
         on_step = self.last_frame_only
         self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)

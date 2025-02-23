@@ -103,6 +103,7 @@ class H2ODataset(torch.utils.data.Dataset):
         self.clip_to_data = {}
         self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
         self.mirror_transform = VideoMirror(p=1)
+        self.crop_size = crop_size
 
         scene_path_pattern = "{dataset_prefix}/{scene}"
         for scene in scenes:
@@ -205,7 +206,7 @@ class H2ODataset(torch.utils.data.Dataset):
 
         """
         # Find the corresponding readers
-        video_idx, video_reader, mano_reader, bbox_reader, joints_reader, intrinsics = max(
+        video_idx, video, mano, bbox, joints, intrinsics = max(
             (i, video, mano, bbox, joints, intrinsics)
             for i, (video, mano, bbox, joints, intrinsics) in self.clip_to_data.items()
             if i <= clip_idx
@@ -218,7 +219,7 @@ class H2ODataset(torch.utils.data.Dataset):
         partial = clip_idx_in_video % step
         start_frame = full * (step * self.num_frames) + partial
 
-        return video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame
+        return video, mano, bbox, joints, intrinsics, start_frame
 
     @staticmethod
     @cache
@@ -315,46 +316,44 @@ class H2ODataset(torch.utils.data.Dataset):
         """
         return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
-
-        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
-        from a single video clip specified by the index. The frames are cropped around either
-        the left or right hand based on the index. If idx >= num_clips, the right hand is processed,
-        otherwise the left hand.
+    def _load_data(
+        self,
+        video_reader: VideoReader,
+        mano_reader: ManoReader,
+        bbox_reader: BboxReader,
+        joints_reader: JointsReader,
+        start_frame: int,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        """Load and preprocess data from readers.
 
         Args:
-            idx (int): The index of the video clip to retrieve. Values [0, num_clips-1] process left hand,
-                      values [num_clips, 2*num_clips-1] process right hand.
+            video_reader (VideoReader): Video reader instance.
+            mano_reader (ManoReader): MANO reader instance.
+            bbox_reader (BboxReader): Bbox reader instance.
+            joints_reader (JointsReader): Joints reader instance.
+            start_frame (int): Start frame index.
 
         Returns:
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing:
-                - A tensor of video frames with shape (T, C, H, W), where T is the number of frames,
-                  C is the number of channels (3), and H=W=output_size. Values are normalized with
-                  mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
-                - A tensor of MANO parameters with shape (T, 61), where T is the number of frames.
-                  Contains translation (3), pose (45) and shape (10) parameters.
-                - A tensor of 3D joint coordinates with shape (T, J, 3), where T is the number of frames
-                  and J is the number of joints.
-                - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
-                  and J is the number of joints.
-                - A tensor of hand availability flags with shape (T,), where T is the number of frames.
-                  1 indicates the hand is available, 0 indicates it is not.
-
-        Raises:
-            IndexError: If the provided index is out of range [0, 2*num_clips-1].
+            tuple containing:
+                - Video frames tensor
+                - Left MANO parameters tensor
+                - Right MANO parameters tensor
+                - Left bbox tensor
+                - Right bbox tensor
+                - Left joints tensor
+                - Right joints tensor
+                - Hand availability tensor
 
         """
-        if idx >= len(self):
-            msg = f"Index {idx} out of range. Total clips: {len(self)}"
-            raise IndexError(msg)
-
-        return_right_hand = False
-        if idx >= self.num_clips:
-            idx = idx - self.num_clips
-            return_right_hand = True
-
-        video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame = self._get_clip_data(idx)
         step = int(self.base_framerate // self.fps)
         if self.cache:
             frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
@@ -395,50 +394,208 @@ class H2ODataset(torch.utils.data.Dataset):
         bbox_right = torch.from_numpy(np.stack(bbox_right))
         joints_left = torch.from_numpy(np.stack(joints_left))
         joints_right = torch.from_numpy(np.stack(joints_right))
-        intrinsics = torch.from_numpy(intrinsics).to(torch.float32)
+        hand_availables_tensor = torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32)
 
+        return clip, mano_left, mano_right, bbox_left, bbox_right, joints_left, joints_right, hand_availables_tensor
+
+    def _process_original_clip(
+        self,
+        clip: torch.Tensor,
+        intrinsics: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Process the original clip by center cropping and resizing.
+
+        Args:
+            clip (torch.Tensor): Original video clip tensor.
+            intrinsics (torch.Tensor): Original camera intrinsics.
+
+        Returns:
+            tuple containing:
+                - Processed video clip tensor
+                - Adjusted camera intrinsics
+
+        """
+        clip_original = clip.clone()
+        intrinsics_original = intrinsics.clone()
+
+        # Center crop to square shape
+        _, _, H, W = clip_original.shape  # noqa: N806
+        if H > W:
+            start = (H - W) // 2
+            clip_original = clip_original[:, :, start : start + W, :]
+            intrinsics_original[1, 2] -= start  # Adjust y-offset
+        elif W > H:
+            start = (W - H) // 2
+            clip_original = clip_original[:, :, :, start : start + H]
+            intrinsics_original[0, 2] -= start  # Adjust x-offset
+
+        # Scale to target size
+        current_size = clip_original.shape[-1]
+        scale = self.crop_size / current_size
+        intrinsics_original[:2, :] = intrinsics_original[:2, :] * scale
+        clip_original = F.resize(clip_original, size=[self.crop_size, self.crop_size], antialias=True)
+
+        return clip_original, intrinsics_original
+
+    def _get_hand_data(
+        self,
+        return_right_hand: bool,
+        mano_left: torch.Tensor,
+        mano_right: torch.Tensor,
+        bbox_left: torch.Tensor,
+        bbox_right: torch.Tensor,
+        joints_left: torch.Tensor,
+        joints_right: torch.Tensor,
+        hand_availables: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get data for the specified hand.
+
+        Args:
+            return_right_hand (bool): Whether to return right hand data.
+            mano_left (torch.Tensor): Left hand MANO parameters.
+            mano_right (torch.Tensor): Right hand MANO parameters.
+            bbox_left (torch.Tensor): Left hand bounding boxes.
+            bbox_right (torch.Tensor): Right hand bounding boxes.
+            joints_left (torch.Tensor): Left hand joints.
+            joints_right (torch.Tensor): Right hand joints.
+            hand_availables (torch.Tensor): Hand availability flags.
+
+        Returns:
+            tuple containing:
+                - MANO parameters for selected hand
+                - Bounding boxes for selected hand
+                - Joints for selected hand
+                - Hand availability flags
+
+        """
         if return_right_hand:
-            mano_current = mano_right
-            bbox_current = bbox_right
-            joints_current = joints_right
-            hand_available = torch.tensor([h["right"] for h in hand_availables], dtype=torch.float32)
-        else:
-            mano_current = mano_left
-            bbox_current = bbox_left
-            joints_current = joints_left
-            hand_available = torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32)
+            return (
+                mano_right,
+                bbox_right,
+                joints_right,
+                torch.tensor([h["right"] for h in hand_availables], dtype=torch.float32),
+            )
+        return (
+            mano_left,
+            bbox_left,
+            joints_left,
+            hand_availables,
+        )
 
-        mano_trans = mano_current[..., :3].unsqueeze(1).clone()
-        # Scale to milimeters
-        mano_trans = mano_trans * 1000
-        joints_2d_current = project_joints_to_2d(
+    def __getitem__(
+        self,
+        idx: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retrieve a video clip and corresponding MANO parameters, joints and 2D joints from the dataset.
+
+        This method loads frames, MANO parameters, 3D joint coordinates, and 2D joint coordinates
+        from a single video clip specified by the index. The frames are cropped around either
+        the left or right hand based on the index. If idx >= num_clips, the right hand is processed,
+        otherwise the left hand.
+
+        Args:
+            idx (int): The index of the video clip to retrieve. Values [0, num_clips-1] process left hand,
+                      values [num_clips, 2*num_clips-1] process right hand.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                - A tensor of cropped video frames with shape (T, C, H, W), where T is the number of frames,
+                  C is the number of channels (3), and H=W=output_size. Values are normalized with
+                  mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                - A tensor of MANO parameters with shape (T, 61), where T is the number of frames.
+                  Contains translation (3), pose (45) and shape (10) parameters.
+                - A tensor of 3D joint coordinates with shape (T, J, 3), where T is the number of frames
+                  and J is the number of joints.
+                - A tensor of 2D joint coordinates with shape (T, J, 2), where T is the number of frames
+                  and J is the number of joints.
+                - A tensor of hand availability flags with shape (T,), where T is the number of frames.
+                  1 indicates the hand is available, 0 indicates it is not.
+                - A tensor of original non-cropped video frames with shape (T, C, H, W), normalized with
+                  mean (0.45, 0.45, 0.45) and std (0.225, 0.225, 0.225).
+                - A tensor of camera intrinsics for the original resized view with shape (3, 3).
+
+        Raises:
+            IndexError: If the provided index is out of range [0, 2*num_clips-1].
+
+        """
+        if idx >= len(self):
+            msg = f"Index {idx} out of range. Total clips: {len(self)}"
+            raise IndexError(msg)
+
+        return_right_hand = idx >= self.num_clips
+        if return_right_hand:
+            idx = idx - self.num_clips
+
+        # Get readers and start frame
+        video_reader, mano_reader, bbox_reader, joints_reader, intrinsics, start_frame = self._get_clip_data(idx)
+
+        # Load all data
+        clip, mano_left, mano_right, bbox_left, bbox_right, joints_left, joints_right, hand_availables = (
+            self._load_data(
+                video_reader,
+                mano_reader,
+                bbox_reader,
+                joints_reader,
+                start_frame,
+            )
+        )
+
+        # Get data for the selected hand
+        mano_current, bbox_current, joints_current, hand_available = self._get_hand_data(
+            return_right_hand,
+            mano_left,
+            mano_right,
+            bbox_left,
+            bbox_right,
+            joints_left,
+            joints_right,
+            hand_availables,
+        )
+
+        # Process original clip
+        clip_original, intrinsics_original = self._process_original_clip(clip, intrinsics.to(torch.float32))
+
+        # Project 2D joints for original view
+        mano_trans = mano_current[..., :3].unsqueeze(1).clone() * 1000  # Scale to millimeters
+        joints_2d_original = project_joints_to_2d(
             (joints_current + mano_trans).unsqueeze(0),
-            intrinsics,
+            intrinsics_original,
         ).squeeze(0)
 
-        # Apply CropHand transform for the current hand only
-        clip_current, joints_2d_current = self.crop_transform(
-            clip,
-            bbox_current,
-            joints_2d_current,
-        )
+        # Apply hand crop transform
+        clip_current, _ = self.crop_transform(clip, bbox_current, joints_2d_original)
+
+        # Mirror transform for left hand
         if not return_right_hand:
-            clip_current, mano_current, joints_current, joints_2d_current = self.mirror_transform(
+            clip_current, mano_current, joints_current, _ = self.mirror_transform(
                 clip_current,
                 mano_current,
                 joints_current,
-                joints_2d_current,
+                None,
+            )
+            # Also mirror the original clip and 2D joints
+            clip_original, _, _, joints_2d_original = self.mirror_transform(
+                clip_original,
+                None,  # Unused
+                None,  # Unused
+                joints_2d_original,
             )
 
-        # Apply additional transforms if provided
+        # Apply additional transforms
         if self.transforms is not None:
             for transform in self.transforms:
-                clip_current, mano_current, intrinsics = transform(
-                    clip_current,
-                    mano_current,
-                    intrinsics,
-                )
-        # Normalize the cropped clip
-        clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+                clip_current, mano_current, intrinsics = transform(clip_current, mano_current, intrinsics)
 
-        return clip_current, mano_current, joints_current, joints_2d_current, hand_available
+        # Normalize both clips
+        clip_current = F.normalize(clip_current, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+        clip_original = F.normalize(clip_original, mean=(0.45, 0.45, 0.45), std=(0.225, 0.225, 0.225))
+
+        return (
+            clip_current,
+            mano_current,
+            joints_current,
+            joints_2d_original,
+            hand_available,
+            clip_original,
+            intrinsics_original,
+        )
