@@ -331,7 +331,7 @@ class H2ODataset(torch.utils.data.Dataset):
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
-        torch.Tensor,
+        list[dict[str, bool]],
     ]:
         """Load and preprocess data from readers.
 
@@ -351,7 +351,7 @@ class H2ODataset(torch.utils.data.Dataset):
                 - Right bbox tensor
                 - Left joints tensor
                 - Right joints tensor
-                - Hand availability tensor
+                - Hand availability
 
         """
         step = int(self.base_framerate // self.fps)
@@ -394,9 +394,8 @@ class H2ODataset(torch.utils.data.Dataset):
         bbox_right = torch.from_numpy(np.stack(bbox_right))
         joints_left = torch.from_numpy(np.stack(joints_left))
         joints_right = torch.from_numpy(np.stack(joints_right))
-        hand_availables_tensor = torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32)
 
-        return clip, mano_left, mano_right, bbox_left, bbox_right, joints_left, joints_right, hand_availables_tensor
+        return clip, mano_left, mano_right, bbox_left, bbox_right, joints_left, joints_right, hand_availables
 
     def _process_original_clip(
         self,
@@ -479,7 +478,7 @@ class H2ODataset(torch.utils.data.Dataset):
             mano_left,
             bbox_left,
             joints_left,
-            hand_availables,
+            torch.tensor([h["left"] for h in hand_availables], dtype=torch.float32),
         )
 
     def __getitem__(
@@ -539,6 +538,7 @@ class H2ODataset(torch.utils.data.Dataset):
                 start_frame,
             )
         )
+        intrinsics = torch.from_numpy(np.stack(intrinsics))
 
         # Get data for the selected hand
         mano_current, bbox_current, joints_current, hand_available = self._get_hand_data(
