@@ -89,6 +89,7 @@ def main(cfg: DictConfig) -> None:
 
     # Initialize the trainer
     trainer = pl.Trainer(
+        precision="bf16-mixed",
         max_epochs=cfg.trainer.max_epochs,
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
