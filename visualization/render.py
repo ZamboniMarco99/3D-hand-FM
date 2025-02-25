@@ -64,18 +64,29 @@ class Renderer:
     with support for different viewing angles, mesh colors, and rendering configurations.
     """
 
-    def __init__(self, focal_length_x: float, focal_length_y: float, img_size: int, faces: np.ndarray) -> None:
+    def __init__(
+        self,
+        focal_length_x: float,
+        focal_length_y: float,
+        camera_center_x: float,
+        camera_center_y: float,
+        img_size: int,
+        faces: np.ndarray,
+    ) -> None:
         """Initialize the renderer with camera and mesh parameters.
 
         Args:
             focal_length_x: The focal length of the camera in pixels for the x-axis.
             focal_length_y: The focal length of the camera in pixels for the y-axis.
+            camera_center_x: The x-coordinate of the camera principal point in pixels.
+            camera_center_y: The y-coordinate of the camera principal point in pixels.
             img_size: The size of the output image (assumed square) in pixels.
             faces: Array of shape (F, 3) containing the mesh faces indices.
 
         """
         self.focal_length_x = focal_length_x
         self.focal_length_y = focal_length_y
+        self.camera_center = [camera_center_x, camera_center_y]
         self.img_res = img_size
 
         # add faces that make the hand mesh watertight
@@ -99,7 +110,6 @@ class Renderer:
         )
         faces = np.concatenate([faces, faces_new], axis=0)
 
-        self.camera_center = [self.img_res // 2, self.img_res // 2]
         self.faces = faces
         self.faces_left = self.faces[:, [0, 2, 1]]
 
@@ -159,12 +169,11 @@ class Renderer:
 
         camera_pose: np.ndarray = np.eye(4)
         camera_pose[:3, 3] = camera_translation
-        camera_center: list[float] = [image.shape[1] / 2.0, image.shape[0] / 2.0]
         camera = pyrender.IntrinsicsCamera(
             fx=self.focal_length_x,
             fy=self.focal_length_y,
-            cx=camera_center[0],
-            cy=camera_center[1],
+            cx=self.camera_center[0],
+            cy=self.camera_center[1],
             zfar=1e12,
         )
         scene.add(camera, pose=camera_pose)
