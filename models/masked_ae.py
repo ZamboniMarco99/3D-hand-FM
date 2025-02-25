@@ -25,7 +25,6 @@ class MaskedAutoencoderViT(pl.LightningModule):
         num_frames (int): Number of frames in input video.
         height (int): Height of input frames.
         width (int): Width of input frames.
-        patch_size (tuple): Size of patches to extract (t, h, w).
         mask_ratio (float): Ratio of patches to mask.
         decoder_dim (int): Dimension of decoder features.
         decoder_depth (int): Number of transformer layers in decoder.
@@ -46,7 +45,6 @@ class MaskedAutoencoderViT(pl.LightningModule):
         num_frames: int = 16,
         height: int = 224,
         width: int = 224,
-        patch_size: tuple[int, int, int] = (2, 16, 16),
         mask_ratio: float = 0.75,  # noqa: ARG002
         decoder_dim: int = 512,
         decoder_depth: int = 4,
@@ -59,8 +57,6 @@ class MaskedAutoencoderViT(pl.LightningModule):
             num_frames (int, optional): Number of frames in input video. Defaults to 16.
             height (int, optional): Height of input frames. Defaults to 224.
             width (int, optional): Width of input frames. Defaults to 224.
-            patch_size (tuple[int, int, int], optional): Size of patches to extract (t, h, w).
-                Defaults to (2, 16, 16).
             mask_ratio (float, optional): Ratio of patches to mask during training.
                 Defaults to 0.75.
             decoder_dim (int, optional): Dimension of decoder features. Defaults to 512.
@@ -76,9 +72,6 @@ class MaskedAutoencoderViT(pl.LightningModule):
 
         self.save_hyperparameters()
 
-        # Calculate number of patches
-        self.num_patches = (num_frames // patch_size[0]) * (height // patch_size[1]) * (width // patch_size[2])
-
         # Encoder (MViT backbone)
         self.encoder = mvit_v2_s(
             spatial_size=(height, width),
@@ -87,6 +80,16 @@ class MaskedAutoencoderViT(pl.LightningModule):
         )
         encoder_dim = self.encoder.head.in_features
         self.encoder.head = nn.Identity()  # Remove classification head
+
+        # Get patch size from MViT's conv_proj layer
+        patch_size = (
+            self.encoder.conv_proj.stride[0],  # temporal stride
+            self.encoder.conv_proj.stride[1],  # height stride
+            self.encoder.conv_proj.stride[2],  # width stride
+        )
+
+        # Calculate number of patches based on input dimensions and patch size
+        self.num_patches = (num_frames // patch_size[0]) * (height // patch_size[1]) * (width // patch_size[2])
 
         # Masking token
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_dim))
