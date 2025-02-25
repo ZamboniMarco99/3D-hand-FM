@@ -12,7 +12,7 @@ from torch.optim import AdamW
 from torch.optim.optimizer import Optimizer
 from torchvision.models.video.mvit import MViT_V2_S_Weights
 
-from models.video_mano_regressor import mvit_v2_s
+from models.video_mano_regressor import get_mvit_v2_s_block_setting, mvit_v2_s
 
 
 class MaskedAutoencoderViT(pl.LightningModule):
@@ -78,7 +78,7 @@ class MaskedAutoencoderViT(pl.LightningModule):
             temporal_size=num_frames,
             weights=MViT_V2_S_Weights.DEFAULT,  # Use pretrained weights
         )
-        encoder_dim = self.encoder.head.in_features
+        encoder_dim = get_mvit_v2_s_block_setting()[-1].output_channels
         self.encoder.head = nn.Identity()  # Remove classification head
 
         # Get patch size from MViT's conv_proj layer
