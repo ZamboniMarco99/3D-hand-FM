@@ -1,0 +1,31 @@
+# Hydra config for training masked autoencoder
+
+defaults:
+  - _self_
+  - data: h20_pretrained
+
+task_name: "train_masked_ae"
+
+train: True
+
+log_level: INFO
+
+model:
+  learning_rate: 1.5e-4  # Default learning rate for MAE
+  mask_ratio: 0.75  # Ratio of patches to mask
+  decoder_dim: 512  # Dimension of decoder features
+  decoder_depth: 4  # Number of transformer layers in decoder
+  decoder_heads: 8  # Number of attention heads in decoder
+
+transforms: null  # No augmentations by default
+
+logger:
+  name: "mae_pretraining"
+  save_dir: "./logs"
+  group: "train_masked_ae"
+  log_model: True
+
+trainer:
+  max_epochs: 200
+  accelerator: "auto"
+  devices: 4 
