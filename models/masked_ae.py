@@ -4,6 +4,8 @@ This module implements a masked autoencoder approach for self-supervised pretrai
 of video transformers, specifically adapted for the MViT architecture.
 """
 
+import math
+
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -39,6 +41,7 @@ class MaskedAutoencoderViT(pl.LightningModule):
     decoder_pos_embed: nn.Parameter
     decoder: nn.TransformerDecoder
     decoder_pred: nn.Linear
+    ids_restore: Tensor
 
     def __init__(
         self,
@@ -151,24 +154,30 @@ class MaskedAutoencoderViT(pl.LightningModule):
 
         """
         B, L, D = x.shape  # noqa: N806
-        len_keep = int(L * (1 - mask_ratio))
+        num_patches = L - 1  # Exclude the class token
+        num_masked = int(num_patches * mask_ratio)
 
-        noise = torch.rand(B, L, device=x.device)
-        ids_shuffle = torch.argsort(noise, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
+        random_indices = torch.rand(B, num_patches, device=x.device).argsort(dim=1)
+        mask = torch.ones(B, num_patches, device=x.device)
 
-        # Keep first len_keep indices
-        ids_keep = ids_shuffle[:, :len_keep]
-        x_masked = torch.gather(
-            x,
+        masked_indices = random_indices[:, :num_masked]
+        mask.scatter_(1, masked_indices, 0)  # Set the masked indices to 0
+
+        # Keep the class token and remove the masked patches
+        mask = torch.cat(
+            [torch.ones(B, 1, device=x.device), mask],
             dim=1,
-            index=ids_keep.unsqueeze(-1).repeat(1, 1, D),
-        )
+        )  # Add the class token back into the mask (always kept)
 
-        # Generate mask
-        mask = torch.ones([B, L], device=x.device)
-        mask[:, :len_keep] = 0
-        mask = torch.gather(mask, dim=1, index=ids_restore)
+        # Apply the mask to the patches using advanced indexing
+        x_masked = x * mask.unsqueeze(-1)  # Element-wise multiplication to mask out the patches
+
+        # Remove the masked patches: we select the unmasked patches for each batch
+        # We need to reshape the tensor to get rid of masked patches
+        x_masked = x_masked[mask.bool()].view(B, -1, D)  # Flatten to get rid of masked patches
+
+        # Restore indices (for reordering or unmasking purposes)
+        ids_restore = random_indices
 
         return x_masked, mask, ids_restore
 
@@ -191,14 +200,23 @@ class MaskedAutoencoderViT(pl.LightningModule):
         patches = self.encoder.conv_proj(x)  # B, D, T', H', W'
         patches = patches.flatten(2).transpose(1, 2)  # B, L, D
 
-        # Add masking before encoder
+        # Add positional encoding first using MViT's pos_encoding
+        patches = self.encoder.pos_encoding(patches)
+
+        # Apply masking after positional encoding
         x_masked, mask, ids_restore = self.random_masking(patches, mask_ratio)
 
-        # Add cls token and positional encoding using MViT's pos_encoding
-        x_masked = self.encoder.pos_encoding(x_masked)
+        total_patches = x_masked.shape[1] - 1
+        orig_thw = (self.encoder.pos_encoding.temporal_size, *self.encoder.pos_encoding.spatial_size)
+        total_hw = orig_thw[1] * orig_thw[2]
 
-        # Pass through encoder blocks using MViT's spatial and temporal sizes
-        thw = (self.encoder.pos_encoding.temporal_size, *self.encoder.pos_encoding.spatial_size)
+        # Maintain aspect ratios while adjusting for fewer patches
+        ratio_t = orig_thw[0] / total_patches
+        ratio_hw = total_hw / total_patches
+        new_t = max(1, round(total_patches * ratio_t))
+        new_h = max(1, round(math.sqrt(total_patches * ratio_hw * orig_thw[1] / orig_thw[2])))
+        new_w = max(1, round(total_patches / (new_t * new_h)))
+        thw = (new_t, new_h, new_w)
 
         for block in self.encoder.blocks:
             x_masked, thw = block(x_masked, thw)
@@ -206,15 +224,18 @@ class MaskedAutoencoderViT(pl.LightningModule):
 
         return x_masked, patches, mask, ids_restore
 
-    def forward_decoder(self, x: Tensor, ids_restore: Tensor) -> Tensor:
+    def forward_decoder(self, x: Tensor, ids_restore: Tensor, mask: Tensor) -> tuple[Tensor, Tensor]:
         """Forward pass through decoder.
 
         Args:
             x (Tensor): Encoded features.
             ids_restore (Tensor): Indices to restore original sequence.
+            mask (Tensor): Mask of shape (B, L).
 
         Returns:
-            Tensor: Reconstructed patches.
+            tuple:
+                - Tensor: Reconstructed patches for masked tokens only
+                - Tensor: Indices of masked tokens in the original sequence
 
         """
         B = x.shape[0]  # noqa: N806
@@ -225,25 +246,37 @@ class MaskedAutoencoderViT(pl.LightningModule):
         # Embed tokens
         x = self.decoder_embed(x)
 
-        # Append mask tokens
-        mask_tokens = self.mask_token.repeat(B, ids_restore.shape[1] - x.shape[1], 1)
-        x_ = torch.cat([x, mask_tokens], dim=1)
-        x = torch.gather(
-            x_,
-            dim=1,
-            index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[-1]),
-        )
+        # Get number of masked tokens
+        n_masked = ids_restore.shape[1] - x.shape[1]
 
-        # Add positional embedding
-        x = x + self.decoder_pos_embed[:, 1:]  # Skip cls token position
+        # Generate mask tokens
+        mask_tokens = self.mask_token.repeat(B, n_masked, 1)
 
-        # Decoder blocks
-        x = self.decoder(x, x)
+        # Find which indices were masked (where mask == 0)
+        masked_positions = mask == 0  # Shape (B, n_masked)
+        # Select the positional embeddings corresponding to the masked positions
+        decoder_pos_embed_expanded = self.decoder_pos_embed.expand(B, -1, -1)  # Shape (B, num_patches, decoder_dim)
+        print(f"{decoder_pos_embed_expanded.shape=}")
+        print(f"{masked_positions.shape=}")
+        print(f"{decoder_pos_embed_expanded[masked_positions].shape=}")
+
+        masked_pos_embed = decoder_pos_embed_expanded[masked_positions].view(
+            B, n_masked, -1
+        )  # Shape (B, n_masked, decoder_dim)
+
+        # Add positional embeddings to mask_tokens
+        mask_tokens = mask_tokens + masked_pos_embed
+
+        # Decoder blocks - only process masked tokens
+        decoded = self.decoder(mask_tokens, x)
 
         # Predictor
-        return self.decoder_pred(x)
+        pred = self.decoder_pred(decoded)
 
-    def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        # Return predictions and the positions they correspond to
+        return pred, masked_positions
+
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         """Forward pass.
 
         Args:
@@ -251,18 +284,20 @@ class MaskedAutoencoderViT(pl.LightningModule):
 
         Returns:
             tuple:
-                - Tensor of reconstructed patches in latent space
+                - Tensor of reconstructed patches for masked positions
                 - Tensor of original patches in latent space
                 - Tensor of mask
+                - Tensor of masked positions
+                - Tensor of restore indices for mapping masked positions back
 
         """
         # Encode with masking
         latent, patches, mask, ids_restore = self.forward_encoder(x, self.hparams.mask_ratio)
 
-        # Decode
-        pred = self.forward_decoder(latent, ids_restore)
+        # Decode - only get predictions for masked tokens
+        pred, masked_positions = self.forward_decoder(latent, ids_restore, mask)
 
-        return pred, patches, mask
+        return pred, patches, mask, masked_positions, ids_restore
 
     def training_step(
         self,
@@ -282,14 +317,18 @@ class MaskedAutoencoderViT(pl.LightningModule):
         x = batch[0]
         x = x.permute(0, 2, 1, 3, 4)  # B, T, C, H, W -> B, C, T, H, W
 
-        # Forward pass
-        pred, patches, mask = self(x)
+        # Forward pass - get predictions only for masked tokens
+        pred, patches, mask, masked_positions, ids_restore = self(x)
 
-        # Calculate loss on masked patches only
-        loss = F.mse_loss(pred, patches, reduction="none")
-        loss = (loss * mask.unsqueeze(-1)).sum() / (mask.sum() * patches.shape[-1])
+        target = patches.gather(
+            1,
+            ids_restore.gather(1, masked_positions.unsqueeze(-1).expand(-1, -1, 1)).expand(-1, -1, patches.shape[-1]),
+        )
 
-        self.log("train/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        # Calculate loss only on masked patches
+        loss = F.mse_loss(pred, target)
+
+        self.log("train/loss", loss, on_step=True, sync_dist=True, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(
@@ -307,14 +346,18 @@ class MaskedAutoencoderViT(pl.LightningModule):
         x = batch[0]
         x = x.permute(0, 2, 1, 3, 4)  # B, T, C, H, W -> B, C, T, H, W
 
-        # Forward pass
-        pred, patches, mask = self(x)
+        # Forward pass - get predictions only for masked tokens
+        pred, patches, mask, masked_positions, ids_restore = self(x)
 
-        # Calculate loss on masked patches only
-        loss = F.mse_loss(pred, patches, reduction="none")
-        loss = (loss * mask.unsqueeze(-1)).sum() / (mask.sum() * patches.shape[-1])
+        target = patches.gather(
+            1,
+            ids_restore.gather(1, masked_positions.unsqueeze(-1).expand(-1, -1, 1)).expand(-1, -1, patches.shape[-1]),
+        )
 
-        self.log("val/loss", loss, on_step=True, on_epoch=True, prog_bar=True)
+        # Calculate loss only on masked patches
+        loss = F.mse_loss(pred, target)
+
+        self.log("val/loss", loss, on_step=False, sync_dist=True, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self) -> Optimizer:
         """Configure optimizers.
