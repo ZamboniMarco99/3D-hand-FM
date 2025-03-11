@@ -560,11 +560,30 @@ class VideoMANORegressor(pl.LightningModule):
         )
         loss = losses["loss"]
 
+        pred_mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(pred_mano_trans)
+        mask[..., 2] = 1
+        focal_length = intrinsics[0, 0, 0]
+        reverse_depth = focal_length / (F.softplus(pred_mano_trans[..., 2]) + 1e-2)
+        pred_mano_trans = pred_mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+
+        # Scale to milimeters
+        pred_mano_trans = pred_mano_trans * 1000
+
+        pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
+
+        true_mano_trans = y[..., :3].unsqueeze(1).clone() * 1000
+
+        true_hand_joints_trans = true_hand_joints + true_mano_trans
+
         # Additional metrics - only compute for available hands
         mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
         mask_params = hand_available.unsqueeze(-1)
 
         valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_trans = (pred_hand_joints_trans - true_hand_joints_trans) * mask_joints
         valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
         valid_params = (y_pred - y) * mask_params
 
@@ -572,12 +591,14 @@ class VideoMANORegressor(pl.LightningModule):
         available_count = hand_available.sum()
         if available_count > 0:
             mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_trans = torch.linalg.vector_norm(valid_joints_trans, dim=-1).mean(dim=-1).sum() / available_count
             mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
             mse = (valid_params**2).mean(dim=-1).sum() / available_count
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
             mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_trans = torch.tensor(0.0, device=x_cropped.device)
             mje_2d = torch.tensor(0.0, device=x_cropped.device)
             mse = torch.tensor(0.0, device=x_cropped.device)
             mae = torch.tensor(0.0, device=x_cropped.device)
@@ -588,6 +609,7 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("train/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_trans", mje_trans, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log(
@@ -645,11 +667,30 @@ class VideoMANORegressor(pl.LightningModule):
         )
         loss = losses["loss"]
 
+        pred_mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(pred_mano_trans)
+        mask[..., 2] = 1
+        focal_length = intrinsics[0, 0, 0]
+        reverse_depth = focal_length / (F.softplus(pred_mano_trans[..., 2]) + 1e-2)
+        pred_mano_trans = pred_mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+
+        # Scale to milimeters
+        pred_mano_trans = pred_mano_trans * 1000
+
+        pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
+
+        true_mano_trans = y[..., :3].unsqueeze(1).clone() * 1000
+
+        true_hand_joints_trans = true_hand_joints + true_mano_trans
+
         # Additional metrics - only compute for available hands
         mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
         mask_params = hand_available.unsqueeze(-1)
 
         valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_trans = (pred_hand_joints_trans - true_hand_joints_trans) * mask_joints
         valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
         valid_params = (y_pred - y) * mask_params
 
@@ -657,12 +698,14 @@ class VideoMANORegressor(pl.LightningModule):
         available_count = hand_available.sum()
         if available_count > 0:
             mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_trans = torch.linalg.vector_norm(valid_joints_trans, dim=-1).mean(dim=-1).sum() / available_count
             mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
             mse = (valid_params**2).mean(dim=-1).sum() / available_count
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
             mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_trans = torch.tensor(0.0, device=x_cropped.device)
             mje_2d = torch.tensor(0.0, device=x_cropped.device)
             mse = torch.tensor(0.0, device=x_cropped.device)
             mae = torch.tensor(0.0, device=x_cropped.device)
@@ -673,6 +716,7 @@ class VideoMANORegressor(pl.LightningModule):
         self.log("val/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_trans", mje_trans, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log(
