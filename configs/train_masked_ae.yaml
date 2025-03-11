@@ -13,9 +13,9 @@ log_level: INFO
 model:
   learning_rate: 1.5e-4  # Default learning rate for MAE
   mask_ratio: 0.75  # Ratio of patches to mask
-  decoder_dim: 512  # Dimension of decoder features
-  decoder_depth: 4  # Number of transformer layers in decoder
-  decoder_heads: 8  # Number of attention heads in decoder
+  decoder_dim: 256  # Dimension of decoder features
+  decoder_depth: 2  # Number of transformer layers in decoder
+  decoder_heads: 4  # Number of attention heads in decoder
 
 transforms: null  # No augmentations by default
 
