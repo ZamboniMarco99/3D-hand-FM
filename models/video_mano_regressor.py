@@ -574,7 +574,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
 
-        true_mano_trans = y[..., :3].unsqueeze(1).clone() * 1000
+        true_mano_trans = y[..., :3].unsqueeze(2).clone() * 1000
 
         true_hand_joints_trans = true_hand_joints + true_mano_trans
 
@@ -681,7 +681,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
 
-        true_mano_trans = y[..., :3].unsqueeze(1).clone() * 1000
+        true_mano_trans = y[..., :3].unsqueeze(2).clone() * 1000
 
         true_hand_joints_trans = true_hand_joints + true_mano_trans
 
