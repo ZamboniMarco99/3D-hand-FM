@@ -383,8 +383,15 @@ class VideoMANORegressor(pl.LightningModule):
         # Predict reverse depth using a mask to avoid modifying in place
         mask = torch.zeros_like(mano_trans)
         mask[..., 2] = 1
-        focal_length = intrinsics[0, 0, 0]
-        reverse_depth = focal_length / (F.softplus(mano_trans[..., 2]) + 1e-2)
+        # Get focal length for each batch item
+        batch_size = mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        # Calculate reverse depth using per-batch focal lengths
+        reverse_depth = focal_lengths / (F.softplus(mano_trans[..., 2]) + 1e-2)
         mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
 
         # Scale to milimeters
