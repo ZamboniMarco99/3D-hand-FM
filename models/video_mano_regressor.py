@@ -723,6 +723,9 @@ class VideoMANORegressor(pl.LightningModule):
             mse = (valid_params**2).mean(dim=-1).sum() / available_count
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
+            diff_trans_x = torch.abs(pred_hand_joints_trans[..., 0] - true_hand_joints_trans[..., 0])
+            diff_trans_y = torch.abs(pred_hand_joints_trans[..., 1] - true_hand_joints_trans[..., 1])
+            diff_trans_z = torch.abs(pred_hand_joints_trans[..., 2] - true_hand_joints_trans[..., 2])
         else:
             mje = torch.tensor(0.0, device=x_cropped.device)
             mje_trans = torch.tensor(0.0, device=x_cropped.device)
@@ -730,7 +733,9 @@ class VideoMANORegressor(pl.LightningModule):
             mse = torch.tensor(0.0, device=x_cropped.device)
             mae = torch.tensor(0.0, device=x_cropped.device)
             pamje = torch.tensor(0.0, device=x_cropped.device)
-
+            diff_trans_x = torch.tensor(0.0, device=x_cropped.device)
+            diff_trans_y = torch.tensor(0.0, device=x_cropped.device)
+            diff_trans_z = torch.tensor(0.0, device=x_cropped.device)
         on_step = self.last_frame_only
         self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
@@ -746,6 +751,9 @@ class VideoMANORegressor(pl.LightningModule):
             on_epoch=True,
             sync_dist=True,
         )
+        self.log("val/mean_diff_trans_x", diff_trans_x.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_diff_trans_y", diff_trans_y.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_diff_trans_z", diff_trans_z.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
             self.log(f"val/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 
