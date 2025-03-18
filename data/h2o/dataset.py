@@ -71,6 +71,7 @@ class H2ODataset(torch.utils.data.Dataset):
         transforms: list[nn.Module] | None = None,
         crop_size: int = 224,
         padding_factor: float = 1.2,
+        temporal_aug: bool = False,
     ) -> None:
         """Initialize the H2ODataset.
 
@@ -86,6 +87,7 @@ class H2ODataset(torch.utils.data.Dataset):
                 with transformed tensors. Defaults to None.
             crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
+            temporal_aug (bool, optional): Whether to apply temporal augmentation. Defaults to False.
 
         """
         self.video_readers = []
@@ -99,6 +101,7 @@ class H2ODataset(torch.utils.data.Dataset):
         self.base_framerate = 30
         self.cache = cache
         self.transforms = transforms
+        self.temporal_aug = temporal_aug
         # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
         self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
@@ -223,7 +226,15 @@ class H2ODataset(torch.utils.data.Dataset):
 
     @staticmethod
     @cache
-    def _get_video_frames(video_reader: VideoReader, start_frame: int, num_frames: int, step: int) -> list[np.ndarray]:
+    def _get_video_frames(
+        video_reader: VideoReader,
+        start_frame: int,
+        num_frames: int,
+        step: int,
+        temporal_aug: bool = False,
+        max_skip: int = 5,
+        max_repeat: int = 5,
+    ) -> list[np.ndarray]:
         """Get video frames from the video reader for a given clip.
 
         Args:
@@ -231,12 +242,46 @@ class H2ODataset(torch.utils.data.Dataset):
             start_frame (int): The start frame index.
             num_frames (int): The number of frames to retrieve.
             step (int): The step size between frames.
+            temporal_aug (bool, optional): Whether to apply temporal augmentation. Defaults to False.
+            max_skip (int, optional): Maximum number of frames to skip in temporal augmentation.
+            max_repeat (int, optional): Maximum number of times to repeat a frame in temporal augmentation.
 
         Returns:
             list[np.ndarray]: A list of video frames with shape (H, W, C).
 
         """
-        frames = video_reader.get_frames(list(range(start_frame, start_frame + num_frames * step, step)))
+        if not temporal_aug:
+            frame_indices = list(range(start_frame, start_frame + num_frames * step, step))
+        else:
+            frame_indices = []
+            current_frame = start_frame
+            total_frames = len(video_reader)
+
+            while len(frame_indices) < num_frames:
+                # Add current frame
+                frame_indices.append(current_frame)
+
+                # Randomly decide to repeat the frame
+                if np.random.random() < 0.3:  # noqa: PLR2004
+                    repeat_count = np.random.randint(1, max_repeat + 1)
+                    frame_indices.extend([current_frame] * repeat_count)
+
+                # Randomly decide to skip frames
+                if np.random.random() < 0.3:  # noqa: PLR2004
+                    skip_count = np.random.randint(1, max_skip + 1)
+                    current_frame += step * skip_count
+                else:
+                    current_frame += step
+
+                # Ensure we don't go beyond video bounds
+                if current_frame >= total_frames:
+                    # If we're out of bounds, pad with the last frame
+                    remaining = num_frames - len(frame_indices)
+                    frame_indices.extend([frame_indices[-1]] * remaining)
+                    break
+
+        # Get all frames at once
+        frames = video_reader.get_frames(frame_indices)
 
         # Normalize frames from uint8 to float32 with values between 0 and 1
         normalized_frames = [frame.astype(np.float32) / 255 for frame in frames]
@@ -356,7 +401,13 @@ class H2ODataset(torch.utils.data.Dataset):
         """
         step = int(self.base_framerate // self.fps)
         if self.cache:
-            frames = self._get_video_frames(video_reader, start_frame, self.num_frames, step)
+            frames = self._get_video_frames(
+                video_reader,
+                start_frame,
+                self.num_frames,
+                step,
+                temporal_aug=self.temporal_aug,
+            )
             mano_params_left, mano_params_right, hand_availables = self._get_mano_params(
                 mano_reader,
                 start_frame,
@@ -366,7 +417,13 @@ class H2ODataset(torch.utils.data.Dataset):
             bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
             joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
         else:
-            frames = self._get_video_frames.__wrapped__(video_reader, start_frame, self.num_frames, step)
+            frames = self._get_video_frames.__wrapped__(
+                video_reader,
+                start_frame,
+                self.num_frames,
+                step,
+                temporal_aug=self.temporal_aug,
+            )
             mano_params_left, mano_params_right, hand_availables = self._get_mano_params.__wrapped__(
                 mano_reader,
                 start_frame,
