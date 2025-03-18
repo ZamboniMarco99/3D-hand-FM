@@ -228,58 +228,18 @@ class H2ODataset(torch.utils.data.Dataset):
     @cache
     def _get_video_frames(
         video_reader: VideoReader,
-        start_frame: int,
-        num_frames: int,
-        step: int,
-        temporal_aug: bool = False,
-        max_skip: int = 5,
-        max_repeat: int = 5,
+        frame_indices: list[int],
     ) -> list[np.ndarray]:
-        """Get video frames from the video reader for a given clip.
+        """Get video frames from the video reader for given frame indices.
 
         Args:
             video_reader (VideoReader): The video reader instance.
-            start_frame (int): The start frame index.
-            num_frames (int): The number of frames to retrieve.
-            step (int): The step size between frames.
-            temporal_aug (bool, optional): Whether to apply temporal augmentation. Defaults to False.
-            max_skip (int, optional): Maximum number of frames to skip in temporal augmentation.
-            max_repeat (int, optional): Maximum number of times to repeat a frame in temporal augmentation.
+            frame_indices (list[int]): List of frame indices to retrieve.
 
         Returns:
             list[np.ndarray]: A list of video frames with shape (H, W, C).
 
         """
-        if not temporal_aug:
-            frame_indices = list(range(start_frame, start_frame + num_frames * step, step))
-        else:
-            frame_indices = []
-            current_frame = start_frame
-            total_frames = len(video_reader)
-
-            while len(frame_indices) < num_frames:
-                # Add current frame
-                frame_indices.append(current_frame)
-
-                # Randomly decide to repeat the frame
-                if np.random.random() < 0.3:  # noqa: PLR2004
-                    repeat_count = np.random.randint(1, max_repeat + 1)
-                    frame_indices.extend([current_frame] * repeat_count)
-
-                # Randomly decide to skip frames
-                if np.random.random() < 0.3:  # noqa: PLR2004
-                    skip_count = np.random.randint(1, max_skip + 1)
-                    current_frame += step * skip_count
-                else:
-                    current_frame += step
-
-                # Ensure we don't go beyond video bounds
-                if current_frame >= total_frames:
-                    # If we're out of bounds, pad with the last frame
-                    remaining = num_frames - len(frame_indices)
-                    frame_indices.extend([frame_indices[-1]] * remaining)
-                    break
-
         # Get all frames at once
         frames = video_reader.get_frames(frame_indices)
 
@@ -292,17 +252,13 @@ class H2ODataset(torch.utils.data.Dataset):
     @cache
     def _get_mano_params(
         mano_reader: ManoReader,
-        start_frame: int,
-        num_frames: int,
-        step: int,
+        frame_indices: list[int],
     ) -> tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]:
-        """Get MANO parameters from the MANO reader for a given clip.
+        """Get MANO parameters from the MANO reader for given frame indices.
 
         Args:
             mano_reader (ManoReader): The MANO reader instance.
-            start_frame (int): The start frame index.
-            num_frames (int): The number of frames to retrieve.
-            step (int): The step size between frames.
+            frame_indices (list[int]): List of frame indices to retrieve.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray], list[dict[str, bool]]]: A tuple containing:
@@ -311,23 +267,19 @@ class H2ODataset(torch.utils.data.Dataset):
                 - The third list contains dictionaries indicating availability of each hand for each frame.
 
         """
-        return mano_reader.get_mano_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+        return mano_reader.get_mano_sequence(frame_indices)
 
     @staticmethod
     @cache
     def _get_bbox_data(
         bbox_reader: BboxReader,
-        start_frame: int,
-        num_frames: int,
-        step: int,
+        frame_indices: list[int],
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        """Get bounding box data from the bbox reader for a given clip.
+        """Get bounding box data from the bbox reader for given frame indices.
 
         Args:
             bbox_reader (BboxReader): The bbox reader instance.
-            start_frame (int): The start frame index.
-            num_frames (int): The number of frames to retrieve.
-            step (int): The step size between frames.
+            frame_indices (list[int]): List of frame indices to retrieve.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
@@ -335,23 +287,19 @@ class H2ODataset(torch.utils.data.Dataset):
                 - The second list contains bbox coordinates for the right hand for each frame.
 
         """
-        return bbox_reader.get_bbox_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+        return bbox_reader.get_bbox_sequence(frame_indices)
 
     @staticmethod
     @cache
     def _get_joints_data(
         joints_reader: JointsReader,
-        start_frame: int,
-        num_frames: int,
-        step: int,
+        frame_indices: list[int],
     ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-        """Get joints data from the joints reader for a given clip.
+        """Get joints data from the joints reader for given frame indices.
 
         Args:
             joints_reader (JointsReader): The joints reader instance.
-            start_frame (int): The start frame index.
-            num_frames (int): The number of frames to retrieve.
-            step (int): The step size between frames.
+            frame_indices (list[int]): List of frame indices to retrieve.
 
         Returns:
             tuple[list[np.ndarray], list[np.ndarray]]: A tuple containing two lists of numpy arrays:
@@ -359,7 +307,7 @@ class H2ODataset(torch.utils.data.Dataset):
                 - The second list contains joints coordinates for the right hand for each frame.
 
         """
-        return joints_reader.get_joints_sequence(list(range(start_frame, start_frame + num_frames * step, step)))
+        return joints_reader.get_joints_sequence(frame_indices)
 
     def _load_data(
         self,
@@ -400,48 +348,56 @@ class H2ODataset(torch.utils.data.Dataset):
 
         """
         step = int(self.base_framerate // self.fps)
-        if self.cache:
-            frames = self._get_video_frames(
-                video_reader,
-                start_frame,
-                self.num_frames,
-                step,
-                temporal_aug=self.temporal_aug,
-            )
-            mano_params_left, mano_params_right, hand_availables = self._get_mano_params(
-                mano_reader,
-                start_frame,
-                self.num_frames,
-                step,
-            )
-            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, start_frame, self.num_frames, step)
-            joints_left, joints_right = self._get_joints_data(joints_reader, start_frame, self.num_frames, step)
+
+        # Generate frame indices
+        if not self.temporal_aug:
+            frame_indices = list(range(start_frame, start_frame + self.num_frames * step, step))
         else:
-            frames = self._get_video_frames.__wrapped__(
-                video_reader,
-                start_frame,
-                self.num_frames,
-                step,
-                temporal_aug=self.temporal_aug,
-            )
+            frame_indices = []
+            current_frame = start_frame
+            total_frames = len(video_reader)
+            max_skip = 5
+            max_repeat = 5
+
+            while len(frame_indices) < self.num_frames:
+                # Add current frame
+                frame_indices.append(current_frame)
+
+                # Randomly decide to repeat the frame
+                if np.random.random() < 0.3:  # noqa: PLR2004
+                    repeat_count = np.random.randint(1, max_repeat + 1)
+                    frame_indices.extend([current_frame] * repeat_count)
+
+                # Randomly decide to skip frames
+                if np.random.random() < 0.3:  # noqa: PLR2004
+                    skip_count = np.random.randint(1, max_skip + 1)
+                    current_frame += step * skip_count
+                else:
+                    current_frame += step
+
+                # Ensure we don't go beyond video bounds
+                if current_frame >= total_frames:
+                    # If we're out of bounds, pad with the last frame
+                    remaining = self.num_frames - len(frame_indices)
+                    frame_indices.extend([frame_indices[-1]] * remaining)
+                    break
+
+        # Ensure we have exactly num_frames indices
+        frame_indices = frame_indices[: self.num_frames]
+
+        if self.cache:
+            frames = self._get_video_frames(video_reader, frame_indices)
+            mano_params_left, mano_params_right, hand_availables = self._get_mano_params(mano_reader, frame_indices)
+            bbox_left, bbox_right = self._get_bbox_data(bbox_reader, frame_indices)
+            joints_left, joints_right = self._get_joints_data(joints_reader, frame_indices)
+        else:
+            frames = self._get_video_frames.__wrapped__(video_reader, frame_indices)
             mano_params_left, mano_params_right, hand_availables = self._get_mano_params.__wrapped__(
                 mano_reader,
-                start_frame,
-                self.num_frames,
-                step,
+                frame_indices,
             )
-            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(
-                bbox_reader,
-                start_frame,
-                self.num_frames,
-                step,
-            )
-            joints_left, joints_right = self._get_joints_data.__wrapped__(
-                joints_reader,
-                start_frame,
-                self.num_frames,
-                step,
-            )
+            bbox_left, bbox_right = self._get_bbox_data.__wrapped__(bbox_reader, frame_indices)
+            joints_left, joints_right = self._get_joints_data.__wrapped__(joints_reader, frame_indices)
 
         # Convert list of numpy arrays to PyTorch tensors
         clip = torch.from_numpy(np.stack(frames))
