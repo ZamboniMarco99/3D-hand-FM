@@ -56,9 +56,8 @@ class ArcticDataModule(pl.LightningDataModule):
 
     # TODO: Update these with the actual Arctic dataset train/val splits
     # Arctic dataset splits based on the official repository
-    train_scenes = ("s01/box_grab_01",)
-
-    val_scenes = ("s01/box_grab_01",)
+    train_subjects = ("s01", "s02", "s04", "s06", "s07", "s08", "s09", "s10")
+    val_subjects = ("s05",)
 
     def __init__(
         self,
@@ -72,6 +71,7 @@ class ArcticDataModule(pl.LightningDataModule):
         crop_size: int = 224,
         padding_factor: float = 1.2,
         dataset_type: Literal["sequence", "last_frame"] = "sequence",
+        temporal_aug: bool = False,
     ) -> None:
         """Initialize the ArcticDataModule.
 
@@ -89,6 +89,7 @@ class ArcticDataModule(pl.LightningDataModule):
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
             dataset_type (str, optional): Type of dataset to use. Either 'sequence' or 'last_frame'.
                 Defaults to 'sequence'.
+            temporal_aug (bool, optional): Whether to apply temporal augmentation to training data. Defaults to False.
 
         """
         super().__init__()
@@ -102,6 +103,7 @@ class ArcticDataModule(pl.LightningDataModule):
         self.crop_size = crop_size
         self.padding_factor = padding_factor
         self.dataset_type = dataset_type
+        self.temporal_aug = temporal_aug
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -120,7 +122,7 @@ class ArcticDataModule(pl.LightningDataModule):
         """
         self.train_dataset = ArcticDataset(
             dataset_prefix=self.dataset_prefix,
-            scenes=self.train_scenes,
+            subjects=self.train_subjects,
             cameras=self.cameras,
             num_frames=self.num_frames,
             fps=self.fps,
@@ -128,10 +130,11 @@ class ArcticDataModule(pl.LightningDataModule):
             transforms=self.transforms,
             crop_size=self.crop_size,
             padding_factor=self.padding_factor,
+            temporal_aug=self.temporal_aug,
         )
         self.val_dataset = ArcticDataset(
             dataset_prefix=self.dataset_prefix,
-            scenes=self.val_scenes,
+            subjects=self.val_subjects,
             cameras=self.cameras,
             num_frames=self.num_frames,
             fps=self.fps,
@@ -139,6 +142,7 @@ class ArcticDataModule(pl.LightningDataModule):
             transforms=None,
             crop_size=self.crop_size,
             padding_factor=self.padding_factor,
+            temporal_aug=False,  # No temporal augmentation for validation
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")

@@ -59,19 +59,22 @@ class ArcticDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         dataset_prefix: str,
-        scenes: list[str],
+        subjects: list[str],
+        cameras: list[str],
         num_frames: int | None = None,
         fps: float = 7.5,
         cache: bool = True,
         transforms: list[nn.Module] | None = None,
         crop_size: int = 224,
         padding_factor: float = 1.2,
+        temporal_aug: bool = False,
     ) -> None:
         """Initialize the ArcticDataset.
 
         Args:
             dataset_prefix (str): The root directory path of the dataset.
-            scenes (list[str]): List of scene names to include in the dataset.
+            subjects (list[str]): List of subject names to include in the dataset.
+            cameras (list[str]): List of camera names to include in the dataset.
             num_frames (int | None, optional): Number of frames to include per video. Defaults to None.
             fps (float, optional): Desired frames per second. Defaults to 7.5.
             cache (bool, optional): If True, enable caching of video frames. Defaults to True.
@@ -80,6 +83,7 @@ class ArcticDataset(torch.utils.data.Dataset):
                 with transformed tensors. Defaults to None.
             crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
+            temporal_aug (bool, optional): Whether to apply temporal augmentation to training data. Defaults to False.
 
         """
         self.video_readers = []
@@ -90,85 +94,94 @@ class ArcticDataset(torch.utils.data.Dataset):
         self.num_clips = 0
         self.num_frames = num_frames
         self.fps = fps
-        self.base_framerate = 30  # Arctic dataset is recorded at 30 fps
+        self.base_framerate = 30
         self.cache = cache
         self.transforms = transforms
+        self.temporal_aug = temporal_aug
+        # Maps the first dataset index to the corresponding video reader and MANO reader
         self.clip_to_data = {}
         self.crop_transform = CropHand(output_size=crop_size, padding_factor=padding_factor)
         self.mirror_transform = VideoMirror(p=1)
+        self.crop_size = crop_size
 
-        images_dir_path = "cropped_images"
-        data_path = "raw_seqs"
-        hand_bboxes_path = "hand_bbox"
+        images_dir_path = "images"
+        mano_path = "hand_pose_mano"
+        hand_bboxes_path = "predicted_bboxes"
         joints_path = "joints"
+        intrinsics_path = "intrinsics"
 
-        for scene in scenes:
-            for video in os.listdir(Path(dataset_prefix) / images_dir_path / scene):
-                frame_dir_path = Path(dataset_prefix) / images_dir_path / scene / video
-                self.video_readers.append(
-                    VideoReader(
-                        video_path=None,
-                        frame_dir_path=frame_dir_path,
-                        fmt_frame_fn=lambda x: f"{x:05d}.jpg",
-                    ),
-                )
+        for subject in subjects:
+            for video in os.listdir(Path(dataset_prefix) / images_dir_path / subject):
+                for camera in cameras:
+                    frame_dir_path = Path(dataset_prefix) / images_dir_path / subject / video / camera
+                    self.video_readers.append(
+                        VideoReader(
+                            video_path=None,
+                            frame_dir_path=frame_dir_path,
+                            fmt_frame_fn=lambda x: f"{x:05d}.jpg",
+                        ),
+                    )
 
-                # TODO: Get actual intrinsics from the dataset
-                intrinsics = np.array(
-                    [
-                        [0.0, 0.0, 0.0],
-                        [0.0, 0.0, 0.0],
-                        [0.0, 0.0, 1.0],
-                    ],
-                    dtype=np.float32,
-                )
-                self.camera_intrinsics.append(intrinsics)
+                    intrinsics_path = (
+                        Path(dataset_prefix) / intrinsics_path / subject / video / camera / "intrinsics.txt"
+                    )
 
-                mano_dir_path = Path(dataset_prefix) / data_path / f"{scene}.mano.npy"
-                self.mano_readers.append(
-                    ManoReader(
-                        mano_dir_path=mano_dir_path,
-                        assumed_fps=30,
-                        data_format="arctic",
-                    ),
-                )
+                    [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
+                    intrinsics = np.array(
+                        [
+                            [fx, 0, cx],
+                            [0, fy, cy],
+                            [0, 0, 1],
+                        ],
+                        dtype=np.float32,
+                    )
+                    self.camera_intrinsics.append(intrinsics)
 
-                bbox_dir_path = Path(dataset_prefix) / hand_bboxes_path / scene / video
-                self.bbox_readers.append(
-                    BboxReader(
-                        bbox_path=bbox_dir_path,
-                        single_file=True,
-                        use_kalman=True,
-                        measurement_noise=0.1,
-                        min_bbox_diagonal=10,
-                    ),
-                )
+                    mano_dir_path = Path(dataset_prefix) / intrinsics_path / subject / video / camera
+                    self.mano_readers.append(
+                        ManoReader(
+                            mano_dir_path=mano_dir_path,
+                            assumed_fps=30,
+                            fmt_frame_fn=lambda x: f"{x:05d}.txt",
+                        ),
+                    )
 
-                joints_dir_path = Path(dataset_prefix) / joints_path / scene / video
-                self.joints_readers.append(
-                    JointsReader(
-                        joints_dir_path=joints_dir_path,
-                        fmt_frame_fn=lambda x: f"{x:05d}.json",
-                    ),
-                )
+                    bbox_dir_path = Path(dataset_prefix) / hand_bboxes_path / subject / video / camera
+                    self.bbox_readers.append(
+                        BboxReader(
+                            bbox_path=bbox_dir_path,
+                            single_file=True,
+                            use_kalman=True,
+                            measurement_noise=0.1,
+                            min_bbox_diagonal=10,
+                        ),
+                    )
 
-                self.clip_to_data[self.num_clips] = (
-                    self.video_readers[-1],
-                    self.mano_readers[-1],
-                    self.bbox_readers[-1],
-                    self.joints_readers[-1],
-                    self.camera_intrinsics[-1],
-                )
+                    joints_dir_path = Path(dataset_prefix) / joints_path / subject / video / camera
+                    self.joints_readers.append(
+                        JointsReader(
+                            joints_dir_path=joints_dir_path,
+                            fmt_frame_fn=lambda x: f"{x:05d}.json",
+                        ),
+                    )
 
-                # Calculate the number of clips based on the desired fps
-                step = int(self.base_framerate // self.fps)
-                full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
-                partials = max(
-                    (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
-                    0,
-                )
-                total_len = full_starts * step + partials
-                self.num_clips += total_len
+                    self.clip_to_data[self.num_clips] = (
+                        self.video_readers[-1],
+                        self.mano_readers[-1],
+                        self.bbox_readers[-1],
+                        self.joints_readers[-1],
+                        self.camera_intrinsics[-1],
+                    )
+
+                    # Calculate the number of clips based on the desired fps
+                    step = int(self.base_framerate // self.fps)
+                    full_starts = int(len(self.video_readers[-1]) // (step * self.num_frames))
+                    partials = max(
+                        (len(self.video_readers[-1]) + step - (full_starts + 1) * step * self.num_frames),
+                        0,
+                    )
+                    total_len = full_starts * step + partials
+                    self.num_clips += total_len
 
     def __len__(self) -> int:
         """Get the total number of clips in the dataset.
