@@ -137,34 +137,6 @@ class ManoReader:
             hand_available,
         )
 
-    def get_mano_arctic(self, data: dict, frame_idx: int) -> tuple[np.ndarray, np.ndarray]:
-        """Retrieve MANO parameters for a single frame in the Arctic dataset format.
-
-        Args:
-            data (dict): Dictionary containing MANO parameters for both hands.
-            frame_idx (int): The index of the frame to retrieve.
-
-        Returns:
-            tuple[np.ndarray, np.ndarray]: A tuple containing two numpy arrays:
-                - The first array contains MANO parameters for the left hand.
-                - The second array contains MANO parameters for the right hand.
-
-        """
-        left_hand_data = data["left"]
-        right_hand_data = data["right"]
-
-        mano_params_left = {
-            "tran": left_hand_data["trans"][frame_idx],
-            "pose": np.concatenate((left_hand_data["rot"], left_hand_data["pose"]), axis=1)[frame_idx],
-            "shape": left_hand_data["shape"],
-        }
-        mano_params_right = {
-            "tran": right_hand_data["trans"][frame_idx],
-            "pose": np.concatenate((right_hand_data["rot"], right_hand_data["pose"]), axis=1)[frame_idx],
-            "shape": right_hand_data["shape"],
-        }
-        return np.concatenate(list(mano_params_left.values())), np.concatenate(list(mano_params_right.values()))
-
     def get_mano_sequence(
         self,
         frame_idxs: list[int],
@@ -186,15 +158,8 @@ class ManoReader:
         left_hands = []
         right_hands = []
         hand_availables = []
-        if self.data_format == "arctic":
-            data = np.load(self.mano_dir_path, allow_pickle=True).item()
         for frame_idx in frame_idxs:
-            if self.data_format == "arctic":
-                left, right = self.get_mano_arctic(data, frame_idx)
-                # Arctic format doesn't have availability flags, so we assume hands are always available
-                hand_available = {"left": True, "right": True}
-            else:
-                left, right, hand_available = self.get_mano(frame_idx)
+            left, right, hand_available = self.get_mano(frame_idx)
             left_hands.append(left)
             right_hands.append(right)
             hand_availables.append(hand_available)
@@ -229,7 +194,4 @@ class ManoReader:
             FileNotFoundError: If the MANO file for the specified frame is not found.
 
         """
-        if self.data_format == "arctic":
-            data = np.load(self.mano_dir_path, allow_pickle=True).item()
-            return self.get_mano_arctic(data, idx).values()
         return self.get_mano(idx).values()
