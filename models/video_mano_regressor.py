@@ -412,6 +412,7 @@ class VideoMANORegressor(pl.LightningModule):
         pred_keypoints_2d: torch.Tensor,
         true_keypoints_2d: torch.Tensor,
         hand_available: torch.Tensor,
+        intrinsics: torch.Tensor,
     ) -> torch.Tensor:
         """Calculate the loss for the model.
 
@@ -443,6 +444,35 @@ class VideoMANORegressor(pl.LightningModule):
         # Expand hand_available to match parameter dimensions
         hand_available = hand_available.unsqueeze(-1)
 
+        mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(mano_trans)
+        mask[..., 2] = 1
+        # Get focal length for each batch item
+        batch_size = mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        # Calculate reverse depth using per-batch focal lengths
+        reverse_depth = focal_lengths / (F.softplus(mano_trans[..., 2]) + 1e-2)
+        mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+        mano_trans = mano_trans.view(*y_pred[..., :3].shape)
+
+        global_translation_loss = (
+            (
+                F.mse_loss(
+                    mano_trans,
+                    y_true[..., :3],
+                    reduction="none",
+                )
+                * hand_available
+            )
+            .sum(dim=-1)
+            .mean()
+        )
         end_global_orientation = 9 if self.sixd else 6
         global_orientation_loss = (
             (
@@ -499,6 +529,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         if self.hparams.loss_weights is None:
             losses = {
+                "global_translation": global_translation_loss,
                 "global_orientation": global_orientation_loss,
                 "pose": pose_loss,
                 "shape": shape_loss,
@@ -509,6 +540,7 @@ class VideoMANORegressor(pl.LightningModule):
             }
         else:
             losses = {
+                "global_translation": self.hparams.loss_weights["global_translation"] * global_translation_loss,
                 "global_orientation": self.hparams.loss_weights["global_orientation"] * global_orientation_loss,
                 "pose": self.hparams.loss_weights["pose"] * pose_loss,
                 "shape": self.hparams.loss_weights["shape"] * shape_loss,
@@ -564,6 +596,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
             hand_available,
+            intrinsics,
         )
         loss = losses["loss"]
 
@@ -678,6 +711,7 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
             hand_available,
+            intrinsics,
         )
         loss = losses["loss"]
 
