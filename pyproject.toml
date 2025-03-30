@@ -21,6 +21,12 @@ dependencies = [
     "roma==1.5.1",
 ]
 
+[project.optional-dependencies]
+visualization = [
+    "pyrender>=0.1.45",
+    "trimesh>=4.0.0",
+]
+
 [tool.uv]
 dev-dependencies = [
     "ruff>=0.6.8",

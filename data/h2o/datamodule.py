@@ -44,8 +44,16 @@ class H2ODataModule(pl.LightningDataModule):
         cameras (list[str]): List of camera names to include in the dataset.
         batch_size (int, optional): The batch size for DataLoaders. Defaults to 32.
         num_frames (int, optional): Number of frames to include per video. Defaults to 300.
+        fps (float, optional): Desired frames per second. Defaults to 7.5.
+        num_workers (int, optional): Number of worker processes for data loading. Defaults to 8.
+        transforms (list[nn.Module] | None, optional): List of video transform modules to apply to training data.
+            Each transform should take (video, mano_left, mano_right, intrinsic_matrix) as input and return the same
+            tuple with transformed tensors. Defaults to None.
+        crop_size (int, optional): Size of the output square crop in pixels. Defaults to 224.
+        padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
         dataset_type (str, optional): Type of dataset to use. Either 'sequence' or 'last_frame'.
             Defaults to 'sequence'.
+        temporal_aug (bool, optional): Whether to apply temporal augmentation to training data. Defaults to False.
 
     Example:
         datamodule = H2ODataModule(
@@ -91,6 +99,7 @@ class H2ODataModule(pl.LightningDataModule):
         crop_size: int = 224,
         padding_factor: float = 1.2,
         dataset_type: Literal["sequence", "last_frame"] = "sequence",
+        temporal_aug: bool = False,
     ) -> None:
         """Initialize the H2ODataModule.
 
@@ -108,6 +117,7 @@ class H2ODataModule(pl.LightningDataModule):
             padding_factor (float, optional): Factor to increase the crop size by. Defaults to 1.2.
             dataset_type (str, optional): Type of dataset to use. Either 'sequence' or 'last_frame'.
                 Defaults to 'sequence'.
+            temporal_aug (bool, optional): Whether to apply temporal augmentation to training data. Defaults to False.
 
         """
         super().__init__()
@@ -121,6 +131,7 @@ class H2ODataModule(pl.LightningDataModule):
         self.crop_size = crop_size
         self.padding_factor = padding_factor
         self.dataset_type = dataset_type
+        self.temporal_aug = temporal_aug
 
     def setup(self, stage: str | None = None) -> None:  # noqa: ARG002
         """Set up the train and validation datasets.
@@ -149,6 +160,7 @@ class H2ODataModule(pl.LightningDataModule):
             transforms=self.transforms,
             crop_size=self.crop_size,
             padding_factor=self.padding_factor,
+            temporal_aug=self.temporal_aug,
         )
         self.val_dataset = dataset_class(
             dataset_prefix=self.dataset_prefix,
@@ -160,6 +172,7 @@ class H2ODataModule(pl.LightningDataModule):
             transforms=None,
             crop_size=self.crop_size,
             padding_factor=self.padding_factor,
+            temporal_aug=False,  # No temporal augmentation for validation
         )
 
         logging.info(f"Train dataset size: {len(self.train_dataset)}")

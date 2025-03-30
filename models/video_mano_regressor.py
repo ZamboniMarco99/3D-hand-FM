@@ -263,11 +263,18 @@ class VideoMANORegressor(pl.LightningModule):
 
         # MViT encoder
         if pretrained:
-            self.backbone = _mvit_v2_s_pretrained(
+            self.backbone_crops = _mvit_v2_s_pretrained(
+                weights=MViT_V2_S_Weights.DEFAULT,
+            )
+            self.backbone_original = _mvit_v2_s_pretrained(
                 weights=MViT_V2_S_Weights.DEFAULT,
             )
         else:
-            self.backbone = mvit_v2_s(
+            self.backbone_crops = mvit_v2_s(
+                spatial_size=(height, width),
+                temporal_size=num_frames,
+            )
+            self.backbone_original = mvit_v2_s(
                 spatial_size=(height, width),
                 temporal_size=num_frames,
             )
@@ -275,7 +282,8 @@ class VideoMANORegressor(pl.LightningModule):
         backbone_out_features = get_mvit_v2_s_block_setting()[-1].output_channels
 
         # Remove the classification head
-        self.backbone.head = nn.Identity()
+        self.backbone_crops.head = nn.Identity()
+        self.backbone_original.head = nn.Identity()
 
         self.num_trans_params = 3
         self.num_shape_params = 10
@@ -288,24 +296,24 @@ class VideoMANORegressor(pl.LightningModule):
         if last_frame_only:
             # Single frame output
             self.regressor_trans = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_trans_params),
+                nn.Linear(2 * backbone_out_features, self.num_trans_params),
             )
             self.regressor_pose = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_pose_params),
+                nn.Linear(2 * backbone_out_features, self.num_pose_params),
             )
             self.regressor_shape = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_shape_params),
+                nn.Linear(2 * backbone_out_features, self.num_shape_params),
             )
         else:
             # Multi-frame output
             self.regressor_trans = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_trans_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_trans_params * num_frames),
             )
             self.regressor_pose = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_pose_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_pose_params * num_frames),
             )
             self.regressor_shape = nn.Sequential(
-                nn.Linear(backbone_out_features, self.num_shape_params * num_frames),
+                nn.Linear(2 * backbone_out_features, self.num_shape_params * num_frames),
             )
 
         self.mano_model = ManoLayer(
@@ -323,11 +331,19 @@ class VideoMANORegressor(pl.LightningModule):
         self.register_buffer("init_shape", torch.tensor(mean_mano_params["shape"], dtype=torch.float32))
         self.register_buffer("init_trans", torch.tensor(mean_mano_params["cam"], dtype=torch.float32))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x_cropped: torch.Tensor,
+        x_original: torch.Tensor,
+        intrinsics: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the VideoMANORegressor model.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch_size, channels, time, height, width).
+            x_cropped (torch.Tensor): Cropped input tensor of shape (batch_size, channels, time, height, width).
+            x_original (torch.Tensor): Original input tensor of shape (batch_size, channels, time, height, width).
+            intrinsics (torch.Tensor | None, optional): Camera intrinsics matrix of shape (batch_size, 3, 3).
+                If None, uses the default intrinsic matrix. Defaults to None.
 
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple containing:
@@ -336,10 +352,12 @@ class VideoMANORegressor(pl.LightningModule):
                 - Predicted 2D hand joints
 
         """
-        features = self.backbone(x)
-        trans_params = self.regressor_trans(features).reshape(x.shape[0], -1, self.num_trans_params)
-        pose_params = self.regressor_pose(features).reshape(x.shape[0], -1, self.num_pose_params)
-        shape_params = self.regressor_shape(features).reshape(x.shape[0], -1, self.num_shape_params)
+        features_crops = self.backbone_crops(x_cropped)
+        features_original = self.backbone_original(x_original)
+        features = torch.cat((features_crops, features_original), dim=1)
+        trans_params = self.regressor_trans(features).reshape(x_cropped.shape[0], -1, self.num_trans_params)
+        pose_params = self.regressor_pose(features).reshape(x_cropped.shape[0], -1, self.num_pose_params)
+        shape_params = self.regressor_shape(features).reshape(x_cropped.shape[0], -1, self.num_shape_params)
 
         # Reshape the outputs
         hand_params = torch.concat((trans_params, pose_params, shape_params), dim=-1)
@@ -365,14 +383,22 @@ class VideoMANORegressor(pl.LightningModule):
         # Predict reverse depth using a mask to avoid modifying in place
         mask = torch.zeros_like(mano_trans)
         mask[..., 2] = 1
-        reverse_depth = self.hparams.focal_length / (F.softplus(mano_trans[..., 2]) + 1e-2)
+        # Get focal length for each batch item
+        batch_size = mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        # Calculate reverse depth using per-batch focal lengths
+        reverse_depth = focal_lengths / (F.softplus(mano_trans[..., 2]) + 1e-2)
         mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
 
         # Scale to milimeters
         mano_trans = mano_trans * 1000
         hand_joints_2d = project_joints_to_2d(
             hand_joints + mano_trans,
-            self.intrinsic_matrix,
+            intrinsics,
         )
 
         return final_hand_params, hand_joints, hand_joints_2d
@@ -386,6 +412,7 @@ class VideoMANORegressor(pl.LightningModule):
         pred_keypoints_2d: torch.Tensor,
         true_keypoints_2d: torch.Tensor,
         hand_available: torch.Tensor,
+        intrinsics: torch.Tensor,
     ) -> torch.Tensor:
         """Calculate the loss for the model.
 
@@ -417,6 +444,35 @@ class VideoMANORegressor(pl.LightningModule):
         # Expand hand_available to match parameter dimensions
         hand_available = hand_available.unsqueeze(-1)
 
+        mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(mano_trans)
+        mask[..., 2] = 1
+        # Get focal length for each batch item
+        batch_size = mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        # Calculate reverse depth using per-batch focal lengths
+        reverse_depth = focal_lengths / (F.softplus(mano_trans[..., 2]) + 1e-2)
+        mano_trans = mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+        mano_trans = mano_trans.view(*y_pred[..., :3].shape)
+
+        global_translation_loss = (
+            (
+                F.mse_loss(
+                    mano_trans,
+                    y_true[..., :3],
+                    reduction="none",
+                )
+                * hand_available
+            )
+            .sum(dim=-1)
+            .mean()
+        )
         end_global_orientation = 9 if self.sixd else 6
         global_orientation_loss = (
             (
@@ -473,6 +529,7 @@ class VideoMANORegressor(pl.LightningModule):
 
         if self.hparams.loss_weights is None:
             losses = {
+                "global_translation": global_translation_loss,
                 "global_orientation": global_orientation_loss,
                 "pose": pose_loss,
                 "shape": shape_loss,
@@ -483,6 +540,7 @@ class VideoMANORegressor(pl.LightningModule):
             }
         else:
             losses = {
+                "global_translation": self.hparams.loss_weights["global_translation"] * global_translation_loss,
                 "global_orientation": self.hparams.loss_weights["global_orientation"] * global_orientation_loss,
                 "pose": self.hparams.loss_weights["pose"] * pose_loss,
                 "shape": self.hparams.loss_weights["shape"] * shape_loss,
@@ -497,34 +555,38 @@ class VideoMANORegressor(pl.LightningModule):
 
     def training_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> torch.Tensor:
         """Training step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch:
+                A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
                 - Hand availability flags (B, T)
+                - Original non-cropped video frames (B, T, C, H, W)
+                - Camera intrinsics for original view (B, 3, 3)
             batch_idx (int): Index of the batch.
 
         Returns:
             torch.Tensor: Loss value.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
+        x_cropped, y, true_hand_joints, true_keypoints_2d, hand_available, x_original, intrinsics = batch
 
         if self.sixd:
             # convert to 6D pose
             y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
-        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_cropped = x_cropped.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_original = x_original.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x_cropped, x_original, intrinsics)
 
         losses = self.loss_function(
             y_pred,
@@ -534,14 +596,41 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
             hand_available,
+            intrinsics,
         )
         loss = losses["loss"]
+
+        pred_mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(pred_mano_trans)
+        mask[..., 2] = 1
+        batch_size = pred_mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        # Calculate reverse depth using per-batch focal lengths
+        reverse_depth = focal_lengths / (F.softplus(pred_mano_trans[..., 2]) + 1e-2)
+
+        pred_mano_trans = pred_mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+
+        # Scale to milimeters
+        pred_mano_trans = pred_mano_trans * 1000
+
+        pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
+
+        true_mano_trans = y[..., :3].unsqueeze(2).clone() * 1000
+
+        true_hand_joints_trans = true_hand_joints + true_mano_trans
 
         # Additional metrics - only compute for available hands
         mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
         mask_params = hand_available.unsqueeze(-1)
 
         valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_trans = (pred_hand_joints_trans - true_hand_joints_trans) * mask_joints
         valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
         valid_params = (y_pred - y) * mask_params
 
@@ -549,22 +638,25 @@ class VideoMANORegressor(pl.LightningModule):
         available_count = hand_available.sum()
         if available_count > 0:
             mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_trans = torch.linalg.vector_norm(valid_joints_trans, dim=-1).mean(dim=-1).sum() / available_count
             mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
             mse = (valid_params**2).mean(dim=-1).sum() / available_count
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
         else:
-            mje = torch.tensor(0.0, device=x.device)
-            mje_2d = torch.tensor(0.0, device=x.device)
-            mse = torch.tensor(0.0, device=x.device)
-            mae = torch.tensor(0.0, device=x.device)
-            pamje = torch.tensor(0.0, device=x.device)
+            mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_trans = torch.tensor(0.0, device=x_cropped.device)
+            mje_2d = torch.tensor(0.0, device=x_cropped.device)
+            mse = torch.tensor(0.0, device=x_cropped.device)
+            mae = torch.tensor(0.0, device=x_cropped.device)
+            pamje = torch.tensor(0.0, device=x_cropped.device)
 
         on_step = self.last_frame_only
         self.log("train/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("train/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("train/mean_mje_trans", mje_trans, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("train/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log(
@@ -581,31 +673,35 @@ class VideoMANORegressor(pl.LightningModule):
 
     def validation_step(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
         batch_idx: int,  # noqa: ARG002
     ) -> None:
         """Validation step of the VideoMANORegressor model.
 
         Args:
-            batch (tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]): A tuple containing:
+            batch:
+                A tuple containing:
                 - Input video frames (B, T, C, H, W)
                 - Target MANO parameters (B, T, 61)
                 - Target 3D joints (B, T, J, 3)
                 - Target 2D joints (B, T, J, 2)
                 - Hand availability flags (B, T)
+                - Original non-cropped video frames (B, T, C, H, W)
+                - Camera intrinsics for original view (B, 3, 3)
             batch_idx (int): Index of the batch.
 
         """
-        x, y, true_hand_joints, true_keypoints_2d, hand_available = batch
+        x_cropped, y, true_hand_joints, true_keypoints_2d, hand_available, x_original, intrinsics = batch
 
         if self.sixd:
             # convert to 6D pose
             y = mano_to_sixd(y)
 
         # Ensure input is in the correct format for MViT (B, C, T, H, W)
-        x = x.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_cropped = x_cropped.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
+        x_original = x_original.permute(0, 2, 1, 3, 4)  # [B, T, C, H, W] -> [B, C, T, H, W]
 
-        y_pred, pred_hand_joints, pred_keypoints_2d = self(x)
+        y_pred, pred_hand_joints, pred_keypoints_2d = self(x_cropped, x_original, intrinsics)
 
         losses = self.loss_function(
             y_pred,
@@ -615,14 +711,40 @@ class VideoMANORegressor(pl.LightningModule):
             pred_keypoints_2d,
             true_keypoints_2d,
             hand_available,
+            intrinsics,
         )
         loss = losses["loss"]
+
+        pred_mano_trans = y_pred[..., :3].unsqueeze(2)
+
+        # Predict reverse depth using a mask to avoid modifying in place
+        mask = torch.zeros_like(pred_mano_trans)
+        mask[..., 2] = 1
+        batch_size = pred_mano_trans.shape[0]
+        focal_lengths = intrinsics[:, 0, 0]  # Extract focal length for each batch item
+
+        # Reshape focal lengths to match the dimensions needed for broadcasting
+        focal_lengths = focal_lengths.view(batch_size, 1, 1)
+
+        reverse_depth = focal_lengths / (F.softplus(pred_mano_trans[..., 2]) + 1e-2)
+
+        pred_mano_trans = pred_mano_trans * (1 - mask) + reverse_depth.unsqueeze(-1) * mask
+
+        # Scale to milimeters
+        pred_mano_trans = pred_mano_trans * 1000
+
+        pred_hand_joints_trans = pred_hand_joints + pred_mano_trans
+
+        true_mano_trans = y[..., :3].unsqueeze(2).clone() * 1000
+
+        true_hand_joints_trans = true_hand_joints + true_mano_trans
 
         # Additional metrics - only compute for available hands
         mask_joints = hand_available.unsqueeze(-1).unsqueeze(-1)
         mask_params = hand_available.unsqueeze(-1)
 
         valid_joints = (pred_hand_joints - true_hand_joints) * mask_joints
+        valid_joints_trans = (pred_hand_joints_trans - true_hand_joints_trans) * mask_joints
         valid_joints_2d = (pred_keypoints_2d - true_keypoints_2d) * mask_joints
         valid_params = (y_pred - y) * mask_params
 
@@ -630,22 +752,30 @@ class VideoMANORegressor(pl.LightningModule):
         available_count = hand_available.sum()
         if available_count > 0:
             mje = torch.linalg.vector_norm(valid_joints, dim=-1).mean(dim=-1).sum() / available_count
+            mje_trans = torch.linalg.vector_norm(valid_joints_trans, dim=-1).mean(dim=-1).sum() / available_count
             mje_2d = torch.linalg.vector_norm(valid_joints_2d, dim=-1).mean(dim=-1).sum() / available_count
             mse = (valid_params**2).mean(dim=-1).sum() / available_count
             mae = torch.abs(valid_params).mean(dim=-1).sum() / available_count
             pamje = reconstruction_error(pred_hand_joints, true_hand_joints, hand_available)
+            diff_trans_x = torch.abs(pred_hand_joints_trans[..., 0] - true_hand_joints_trans[..., 0])
+            diff_trans_y = torch.abs(pred_hand_joints_trans[..., 1] - true_hand_joints_trans[..., 1])
+            diff_trans_z = torch.abs(pred_hand_joints_trans[..., 2] - true_hand_joints_trans[..., 2])
         else:
-            mje = torch.tensor(0.0, device=x.device)
-            mje_2d = torch.tensor(0.0, device=x.device)
-            mse = torch.tensor(0.0, device=x.device)
-            mae = torch.tensor(0.0, device=x.device)
-            pamje = torch.tensor(0.0, device=x.device)
-
+            mje = torch.tensor(0.0, device=x_cropped.device)
+            mje_trans = torch.tensor(0.0, device=x_cropped.device)
+            mje_2d = torch.tensor(0.0, device=x_cropped.device)
+            mse = torch.tensor(0.0, device=x_cropped.device)
+            mae = torch.tensor(0.0, device=x_cropped.device)
+            pamje = torch.tensor(0.0, device=x_cropped.device)
+            diff_trans_x = torch.tensor(0.0, device=x_cropped.device)
+            diff_trans_y = torch.tensor(0.0, device=x_cropped.device)
+            diff_trans_z = torch.tensor(0.0, device=x_cropped.device)
         on_step = self.last_frame_only
         self.log("val/loss", loss, on_step=on_step, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/mean_mse", mse, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mae", mae, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje", mje, on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_mje_trans", mje_trans, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_mje_2d", mje_2d, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log("val/mean_pamje", pamje, on_step=on_step, on_epoch=True, sync_dist=True)
         self.log(
@@ -655,6 +785,9 @@ class VideoMANORegressor(pl.LightningModule):
             on_epoch=True,
             sync_dist=True,
         )
+        self.log("val/mean_diff_trans_x", diff_trans_x.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_diff_trans_y", diff_trans_y.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
+        self.log("val/mean_diff_trans_z", diff_trans_z.mean(), on_step=on_step, on_epoch=True, sync_dist=True)
         for key, value in losses.items():
             self.log(f"val/losses/{key}", value, on_step=on_step, on_epoch=True, sync_dist=True)
 

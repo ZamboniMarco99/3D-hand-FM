@@ -243,7 +243,7 @@ class VideoMirror(nn.Module):
     def forward(
         self,
         video: Tensor,
-        mano: Tensor,
+        mano: Tensor | None = None,
         joints_3d: Tensor | None = None,
         joints_2d: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor | None]:
@@ -276,14 +276,17 @@ class VideoMirror(nn.Module):
         # Mirror the video frames
         video = torch.flip(video, dims=[-1])
 
-        # Mirror the translation parameters (x coordinate)
-        mirrored_mano = mano.clone()
-        mirrored_mano[..., 0] *= -1
+        if mano is not None:
+            # Mirror the translation parameters (x coordinate)
+            mirrored_mano = mano.clone()
+            mirrored_mano[..., 0] *= -1
 
-        # Mirror relevant pose parameters
-        # Negate x and z components of rotations
-        mirrored_mano[..., 4:51:3] *= -1
-        mirrored_mano[..., 5:51:3] *= -1
+            # Mirror relevant pose parameters
+            # Negate x and z components of rotations
+            mirrored_mano[..., 4:51:3] *= -1
+            mirrored_mano[..., 5:51:3] *= -1
+        else:
+            mirrored_mano = None
 
         # Mirror 2D joint coordinates if provided
         if joints_2d is not None:

@@ -227,7 +227,8 @@ def reconstruction_error(
     s1_reshaped = s1.reshape(-1, *s1.shape[2:])
     s2_reshaped = s2.reshape(-1, *s2.shape[2:])
 
-    s1_hat = compute_similarity_transform(s1_reshaped, s2_reshaped)
+    with torch.autocast(device_type="cuda", dtype=torch.float32):
+        s1_hat = compute_similarity_transform(s1_reshaped, s2_reshaped)
 
     # Reshape back to (B, T, N, 3)
     s1_hat = s1_hat.reshape(batch_size, num_frames, *s1_hat.shape[1:])

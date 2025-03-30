@@ -47,6 +47,7 @@ def main(cfg: DictConfig) -> None:
         padding_factor=cfg.data.padding_factor,
         transforms=transforms,
         dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
+        temporal_aug=cfg.data.temporal_aug,
     )
     logger.info("DataModule initialized")
 
@@ -89,6 +90,7 @@ def main(cfg: DictConfig) -> None:
 
     # Initialize the trainer
     trainer = pl.Trainer(
+        precision="bf16-mixed",
         max_epochs=cfg.trainer.max_epochs,
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
