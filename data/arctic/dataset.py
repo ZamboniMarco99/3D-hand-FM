@@ -108,7 +108,7 @@ class ArcticDataset(torch.utils.data.Dataset):
         mano_path = "hand_pose_mano"
         hand_bboxes_path = "predicted_bboxes"
         joints_path = "joints"
-        intrinsics_path = "intrinsics"
+        intrinsics_prefix = "intrinsics"
 
         for subject in subjects:
             for video in os.listdir(Path(dataset_prefix) / images_dir_path / subject):
@@ -118,12 +118,12 @@ class ArcticDataset(torch.utils.data.Dataset):
                         VideoReader(
                             video_path=None,
                             frame_dir_path=frame_dir_path,
-                            fmt_frame_fn=lambda x: f"{x:05d}.jpg",
+                            fmt_frame_fn=lambda x: f"{(x+1):05d}.jpg",
                         ),
                     )
 
                     intrinsics_path = (
-                        Path(dataset_prefix) / intrinsics_path / subject / video / camera / "intrinsics.txt"
+                        Path(dataset_prefix) / intrinsics_prefix / subject / video / camera / "cam_intrinsics.txt"
                     )
 
                     [fx, fy, cx, cy, w, h] = np.loadtxt(intrinsics_path)
@@ -137,7 +137,7 @@ class ArcticDataset(torch.utils.data.Dataset):
                     )
                     self.camera_intrinsics.append(intrinsics)
 
-                    mano_dir_path = Path(dataset_prefix) / intrinsics_path / subject / video / camera
+                    mano_dir_path = Path(dataset_prefix) / mano_path / subject / video / camera
                     self.mano_readers.append(
                         ManoReader(
                             mano_dir_path=mano_dir_path,
@@ -146,7 +146,9 @@ class ArcticDataset(torch.utils.data.Dataset):
                         ),
                     )
 
-                    bbox_dir_path = Path(dataset_prefix) / hand_bboxes_path / subject / video / camera
+                    bbox_dir_path = (
+                        Path(dataset_prefix) / hand_bboxes_path / subject / video / camera / "predicted_bboxes.txt"
+                    )
                     self.bbox_readers.append(
                         BboxReader(
                             bbox_path=bbox_dir_path,
