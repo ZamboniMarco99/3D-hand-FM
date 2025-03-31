@@ -10,6 +10,7 @@ from omegaconf import DictConfig
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+from data.arctic import ArcticDataModule
 from data.h2o import H2ODataModule
 from data.transforms import VideoColorJitter, VideoMirror, VideoRandomRotation
 from models.video_mano_regressor import VideoMANORegressor
@@ -36,19 +37,39 @@ def main(cfg: DictConfig) -> None:
         transforms = None
 
     # Create dataset and dataloaders
-    datamodule = H2ODataModule(
-        dataset_prefix=cfg.data.dataset_prefix,
-        cameras=cfg.data.cameras,
-        num_frames=cfg.data.num_frames,
-        fps=cfg.data.framerate,
-        batch_size=cfg.data.loader.batch_size,
-        num_workers=cfg.data.loader.num_workers,
-        crop_size=cfg.data.crop_size,
-        padding_factor=cfg.data.padding_factor,
-        transforms=transforms,
-        dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
-        temporal_aug=cfg.data.temporal_aug,
-    )
+    if cfg.data.dataset_name == "h2o":
+        datamodule = H2ODataModule(
+            dataset_prefix=cfg.data.dataset_prefix,
+            cameras=cfg.data.cameras,
+            num_frames=cfg.data.num_frames,
+            fps=cfg.data.framerate,
+            batch_size=cfg.data.loader.batch_size,
+            num_workers=cfg.data.loader.num_workers,
+            crop_size=cfg.data.crop_size,
+            padding_factor=cfg.data.padding_factor,
+            transforms=transforms,
+            dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
+            temporal_aug=cfg.data.temporal_aug,
+        )
+    elif cfg.data.dataset_name == "arctic":
+        datamodule = ArcticDataModule(
+            dataset_prefix=cfg.data.dataset_prefix,
+            cameras=cfg.data.cameras,
+            num_frames=cfg.data.num_frames,
+            fps=cfg.data.framerate,
+            batch_size=cfg.data.loader.batch_size,
+            num_workers=cfg.data.loader.num_workers,
+            crop_size=cfg.data.crop_size,
+            padding_factor=cfg.data.padding_factor,
+            transforms=transforms,
+            dataset_type="last_frame" if cfg.model.last_frame_only else "sequence",
+            temporal_aug=cfg.data.temporal_aug,
+        )
+    else:
+        message = f"Dataset {cfg.data.dataset_name} not supported"
+        logger.error(message)
+        raise ValueError(message)
+
     logger.info("DataModule initialized")
 
     height = cfg.data.crop_size

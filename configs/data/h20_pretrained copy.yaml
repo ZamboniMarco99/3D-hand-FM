@@ -1,5 +1,5 @@
-dataset_prefix: "/cluster/project/cvg/students/mzamboni/data/H2O"
-dataset_name: "h2o"
+dataset_prefix: "/cluster/project/cvg/students/mzamboni/data/arctic"
+dataset_name: "arctic"
 resolution: "1x1"
 num_frames: 16
 framerate: 7.5
@@ -7,11 +7,7 @@ crop_size: 224
 padding_factor: 2
 pretrained: True
 cameras:
-  - "cam0"
-  - "cam1"
-  - "cam2"
-  - "cam3"
-  - "cam4"
+  - "0"
 loader:
   batch_size: 8
   num_workers: 16
