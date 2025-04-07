@@ -415,7 +415,7 @@ class H2ODataset(torch.utils.data.Dataset):
         clip: torch.Tensor,
         intrinsics: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Process the original clip by center cropping and resizing.
+        """Process the original clip by padding to square shape and resizing.
 
         Args:
             clip (torch.Tensor): Original video clip tensor.
@@ -430,16 +430,24 @@ class H2ODataset(torch.utils.data.Dataset):
         clip_original = clip.clone()
         intrinsics_original = intrinsics.clone()
 
-        # Center crop to square shape
+        # Pad to square shape
         _, _, H, W = clip_original.shape  # noqa: N806
         if H > W:
-            start = (H - W) // 2
-            clip_original = clip_original[:, :, start : start + W, :]
-            intrinsics_original[1, 2] -= start  # Adjust y-offset
+            # Pad width to match height
+            total_pad = H - W
+            pad_left = total_pad // 2
+            pad_right = total_pad - pad_left  # Handle odd-sized differences
+            # F.pad order is (left, right, top, bottom)
+            clip_original = torch.nn.functional.pad(clip_original, (pad_left, pad_right, 0, 0), "constant", value=0)
+            intrinsics_original[0, 2] += pad_left  # Adjust x-offset for left padding
         elif W > H:
-            start = (W - H) // 2
-            clip_original = clip_original[:, :, :, start : start + H]
-            intrinsics_original[0, 2] -= start  # Adjust x-offset
+            # Pad height to match width
+            total_pad = W - H
+            pad_top = total_pad // 2
+            pad_bottom = total_pad - pad_top  # Handle odd-sized differences
+            # F.pad order is (left, right, top, bottom)
+            clip_original = torch.nn.functional.pad(clip_original, (0, 0, pad_top, pad_bottom), "constant", value=0)
+            intrinsics_original[1, 2] += pad_top  # Adjust y-offset for top padding
 
         # Scale to target size
         current_size = clip_original.shape[-1]
