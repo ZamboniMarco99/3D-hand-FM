@@ -9,7 +9,7 @@ Install the dependencies:
 
 ```bash
 uv pip install pip setuptools
-uv sync
+uv sync --all-extras
 ```
 
 `pip` and `setuptools` are required to install `chumpy` which is a dependency of `manopth`, see [This issue](https://github.com/astral-sh/uv/issues/7291) for more details.
