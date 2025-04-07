@@ -17,5 +17,5 @@ uv sync --all-extras
 ## Training
 
 ```bash
-env $(cat .env | xargs) uv run src/train.py
+env $(cat .env | xargs) uv run train_mano_regressor.py
 ```
